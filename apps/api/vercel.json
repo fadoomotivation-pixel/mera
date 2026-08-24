@@ -1,4 +1,5 @@
 {
+  "framework": null,
   "buildCommand": "pnpm exec prisma generate && pnpm exec tsc -p tsconfig.json",
   "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }]
 }
