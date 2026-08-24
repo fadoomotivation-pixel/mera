@@ -13,7 +13,8 @@ import { royaltyService } from "../domain/royalty.service.js";
 import { rewardService } from "../domain/reward.service.js";
 import { payoutService } from "../domain/payout.service.js";
 import { businessRulesRegistryService } from "../domain/business-rules-registry.service.js";
-import { NotEligibleError } from "../domain/errors.js";
+import { passwordService } from "../auth/password.service.js";
+import { NotEligibleError, DomainError } from "../domain/errors.js";
 
 export async function adminRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authenticate);
@@ -59,6 +60,89 @@ export async function adminRoutes(app: FastifyInstance) {
   app.get("/business-rules", async (_req, reply) => {
     const rows = await prisma.$transaction((tx) => businessRulesRegistryService.listCurrent(tx));
     reply.send(serializeBigInts(rows));
+  });
+
+  // ---------- Customer & Partner accounts ----------
+  // No SMS/OTP delivery is configured for this deployment (see docs/01-business-rules-matrix.md
+  // §8 item 10), so account creation is admin-driven: the admin sets an email + temporary
+  // password directly, and hands it to the customer/partner out of band (WhatsApp/call/in
+  // person). The OTP login path (auth.routes.ts) still exists and works unmodified if an SMS
+  // provider is wired up later — nothing here removes it, this just adds the alternative.
+  app.get("/customers", async (req, reply) => {
+    requireRole(claims(req), "SUPER_ADMIN", "OPERATIONS_ADMIN", "SUPPORT", "FINANCE_ADMIN", "COMPLIANCE_AUDIT");
+    const customers = await prisma.customer.findMany({
+      include: { user: { select: { email: true, phone: true, status: true, createdAt: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+    reply.send(serializeBigInts(customers));
+  });
+
+  app.post("/customers", async (req, reply) => {
+    requireRole(claims(req), "SUPER_ADMIN", "OPERATIONS_ADMIN", "SUPPORT");
+    const body = z
+      .object({
+        name: z.string().min(1),
+        email: z.string().email(),
+        password: z.string().min(8),
+        phone: z.string().optional(),
+        address: z.string().optional(),
+      })
+      .parse(req.body);
+
+    const existing = await prisma.user.findUnique({ where: { email: body.email } });
+    if (existing) throw new DomainError("EMAIL_IN_USE", `A user with email ${body.email} already exists`);
+
+    const passwordHash = await passwordService.hash(body.password);
+    const created = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: { role: "CUSTOMER", email: body.email, phone: body.phone, passwordHash, status: "ACTIVE" },
+      });
+      return tx.customer.create({
+        data: { userId: user.id, name: body.name, address: body.address },
+        include: { user: { select: { email: true, phone: true } } },
+      });
+    });
+    reply.status(201).send(serializeBigInts(created));
+  });
+
+  app.get("/partners", async (req, reply) => {
+    requireRole(claims(req), "SUPER_ADMIN", "OPERATIONS_ADMIN", "FINANCE_ADMIN", "COMPLIANCE_AUDIT");
+    const partners = await prisma.channelPartner.findMany({
+      include: { user: { select: { email: true, phone: true, status: true, createdAt: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+    reply.send(serializeBigInts(partners));
+  });
+
+  app.post("/partners", async (req, reply) => {
+    requireRole(claims(req), "SUPER_ADMIN", "OPERATIONS_ADMIN");
+    const body = z
+      .object({
+        name: z.string().min(1),
+        email: z.string().email(),
+        password: z.string().min(8),
+        phone: z.string().optional(),
+        panNumber: z.string().optional(),
+      })
+      .parse(req.body);
+
+    const existing = await prisma.user.findUnique({ where: { email: body.email } });
+    if (existing) throw new DomainError("EMAIL_IN_USE", `A user with email ${body.email} already exists`);
+
+    const partnerCode = `MM-P-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const passwordHash = await passwordService.hash(body.password);
+    const created = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: { role: "CHANNEL_PARTNER", email: body.email, phone: body.phone, passwordHash, status: "ACTIVE" },
+      });
+      return tx.channelPartner.create({
+        data: { userId: user.id, name: body.name, partnerCode, panNumber: body.panNumber },
+        include: { user: { select: { email: true, phone: true } } },
+      });
+    });
+    reply.status(201).send(serializeBigInts(created));
   });
 
   // ---------- Projects & Plots (Operations) ----------
