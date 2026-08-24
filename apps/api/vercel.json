@@ -1,5 +1,7 @@
 {
   "framework": null,
+  "//regions": "Mumbai. The database is in Supabase ap-south-1 and effectively every user is in India, so the default iad1 (Washington DC) put the whole round trip — user to function, function to database, and back — across the world twice. Measured admin dashboard response before this change: 7.5-10.3s.",
+  "regions": ["bom1"],
   "buildCommand": "pnpm exec prisma generate && pnpm exec tsc -p tsconfig.json",
   "outputDirectory": "public",
   "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }]
