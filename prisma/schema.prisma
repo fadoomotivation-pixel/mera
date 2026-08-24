@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  FINANCE_ADMIN
+  OPERATIONS_ADMIN
+  COMPLIANCE
+  SUPPORT
+  CHANNEL_PARTNER
+  CUSTOMER
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String?  @unique
+  phone     String   @unique
+  hash      String?
+  role      Role
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer       Customer?
+  channelPartner ChannelPartner?
+}
+
+model Customer {
+  id         String    @id @default(uuid())
+  userId     String    @unique
+  user       User      @relation(fields: [userId], references: [id])
+  kycStatus  String    @default("PENDING")
+  bookings   Booking[]
+}
+
+model ChannelPartner {
+  id           String    @id @default(uuid())
+  userId       String    @unique
+  user         User      @relation(fields: [userId], references: [id])
+  panNumber    String?   @unique
+  bankDetails  Json?
+  sponsorId    String?   // Self-referential for generation tree
+  
+  referrals           Referral[]
+  tierAchievements    TierAchievement[]
+  rewardAchievements  RewardAchievement[]
+}
+
+model Project {
+  id        String   @id @default(uuid())
+  name      String
+  location  String
+  totalArea Float
+  isActive  Boolean  @default(true)
+  plots     Plot[]
+}
+
+model Plot {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id])
+  plotNumber  String
+  sizeGaj     Float
+  ratePerGaj  Float
+  plotAmount  Float    // sizeGaj * ratePerGaj
+  status      String   @default("AVAILABLE") // AVAILABLE, RESERVED, BOOKED, SOLD
+  bookings    Booking[]
+}
+
+model Booking {
+  id                 String   @id @default(uuid())
+  plotId             String
+  plot               Plot     @relation(fields: [plotId], references: [id])
+  customerId         String
+  customer           Customer @relation(fields: [customerId], references: [id])
+  channelPartnerId   String?
+  
+  bookingStatus      String   @default("DRAFT") // DRAFT, RESERVED, BOOKED, PAYMENT_IN_PROGRESS, FULLY_COLLECTED, REGISTERED, COMPLETED, CANCELLED
+  totalAmount        Float    // Plot Amount + Registration
+  registrationAmount Float    @default(1000)
+  
+  ruleVersionId      String?  // Snapshotted business rule active at time of booking
+  createdAt          DateTime @default(now())
+
+  payments           Payment[]
+  referrals          Referral[]
+}
+
+model Payment {
+  id          String   @id @default(uuid())
+  bookingId   String
+  booking     Booking  @relation(fields: [bookingId], references: [id])
+  amount      Float
+  gatewayRef  String?
+  status      String   @default("INITIATED") // INITIATED, PENDING, VERIFIED, COLLECTED, FAILED, REFUNDED
+  date        DateTime @default(now())
+
+  collection  Collection?
+}
+
+model Collection {
+  id              String   @id @default(uuid())
+  paymentId       String   @unique
+  payment         Payment  @relation(fields: [paymentId], references: [id])
+  amount          Float
+  clearedDate     DateTime @default(now())
+  verifiedById    String?  // Admin ID
+}
+
+// IMMUTABLE LEDGER
+model FinancialLedger {
+  id             String   @id @default(uuid())
+  date           DateTime @default(now())
+  sourceType     String   // SALE, PAYMENT, REFERRAL_COMMISSION, BALANCE_SHEET, ROYALY, REWARD, ADMIN_DEDUCTION, TDS, REFUND, ADJUSTMENT, PAYOUT
+  sourceId       String   // ID of the source record (e.g. Referral ID)
+  debit          Float    @default(0)
+  credit         Float    @default(0)
+  currency       String   @default("INR")
+  status         String   @default("POSTED")
+  createdBy      String?  // System or Admin ID
+  ruleVersionId  String?
+  auditTimestamp DateTime @default(now())
+
+  @@index([sourceType, sourceId]) // For quick reconciliation lookups
+}
+
+model Referral {
+  id               String   @id @default(uuid())
+  bookingId        String
+  booking          Booking  @relation(fields: [bookingId], references: [id])
+  channelPartnerId String
+  channelPartner   ChannelPartner @relation(fields: [channelPartnerId], references: [id])
+  grossAmount      Float
+  status           String   @default("PENDING") // PENDING, ELIGIBLE, PROCESSING, PAID, CANCELLED
+}
+
+model TierAchievement {
+  id               String   @id @default(uuid())
+  channelPartnerId String
+  channelPartner   ChannelPartner @relation(fields: [channelPartnerId], references: [id])
+  tierName         String
+  dateAchieved     DateTime @default(now())
+  qualifyingBookingId String
+  status           String   @default("ACTIVE")
+  supersededByTier String?
+}
+
+model RewardAchievement {
+  id               String   @id @default(uuid())
+  channelPartnerId String
+  channelPartner   ChannelPartner @relation(fields: [channelPartnerId], references: [id])
+  rewardName       String
+  qualifyingBookingId String
+  status           String   @default("ELIGIBLE")
+}
