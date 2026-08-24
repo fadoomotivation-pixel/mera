@@ -1,0 +1,1137 @@
+// MERA MAKAN — Prisma schema
+//
+// Conventions (see docs/03-erd.md for full rationale):
+//  - All money fields are BigInt paise (₹1 = 100 paise). Never floats.
+//  - All percentage/rate fields are Int basis points (1 bps = 0.01%). 10% = 1000.
+//  - Every "rule" table shares the shape: version, status (RuleStatus), effectiveFrom,
+//    effectiveTo, createdByUserId, approvedByUserId, previousVersionId, changeNote.
+//    Changing a rule NEVER updates a row in place — it inserts a new version.
+//  - `LedgerEntry` is the single, append-only, immutable financial source of truth.
+//    Stream-specific tables (BalanceSheetLedger, RoyaltyAllocation, RewardAllocation, ...)
+//    extend it 1:1 for stream-specific structured fields; they never hold money that
+//    isn't also mirrored in a LedgerEntry row.
+//  - "Sale" in the business spec = the `Booking` entity once it reaches FULLY_COLLECTED;
+//    we deliberately do not keep a parallel `Sale` table to avoid duplicate totals.
+//  - "CommissionLedger" in the business spec = LedgerEntry rows of type REFERRAL_COMMISSION;
+//    no extra structured columns were needed so no extension table was created.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// SHARED ENUMS
+// ─────────────────────────────────────────────────────────────────────────
+
+enum RuleStatus {
+  FINAL
+  CONFIGURED
+  PENDING_CEO_APPROVAL
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  FINANCE_ADMIN
+  OPERATIONS_ADMIN
+  COMPLIANCE_AUDIT
+  SUPPORT
+  CHANNEL_PARTNER
+  CUSTOMER
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// IDENTITY / AUTH
+// ─────────────────────────────────────────────────────────────────────────
+
+model User {
+  id                String     @id @default(uuid())
+  role              UserRole
+  phone             String?    @unique
+  email             String?    @unique
+  passwordHash      String? // admin-only (also usable as optional secondary auth for customers)
+  twoFactorSecret   String?
+  twoFactorEnabled  Boolean    @default(false)
+  status            UserStatus @default(ACTIVE)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  customer          Customer?
+  partner           ChannelPartner?
+
+  refreshTokens     RefreshToken[]
+  auditLogsAsActor  AuditLog[]      @relation("AuditActor")
+  notifications     Notification[]
+  documentsUploaded Document[]      @relation("DocumentUploadedBy")
+
+  @@index([role])
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+  tokenHash  String    @unique
+  deviceId   String?
+  ipAddress  String?
+  userAgent  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+enum OtpPurpose {
+  LOGIN
+  VERIFY_PHONE
+}
+
+model OtpChallenge {
+  id          String     @id @default(uuid())
+  phone       String
+  purpose     OtpPurpose
+  codeHash    String
+  expiresAt   DateTime
+  attempts    Int        @default(0)
+  consumedAt  DateTime?
+  ipAddress   String?
+  createdAt   DateTime   @default(now())
+
+  @@index([phone, purpose])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CUSTOMER / PARTNER / LEAD
+// ─────────────────────────────────────────────────────────────────────────
+
+model Customer {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id])
+  name       String
+  altPhone   String?
+  address    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  bookings         Booking[]
+  documents        Document[]      @relation("CustomerDocuments")
+  payoutsReceived  Payout[]        @relation("CustomerBeneficiary")
+
+  @@index([name])
+}
+
+model ChannelPartner {
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id])
+  partnerCode      String   @unique
+  name             String
+  panNumber        String?
+  bankAccountRef   String? // opaque reference into a secured vault, never raw account number
+  referredByPartnerId String?
+  referredByPartner   ChannelPartner?  @relation("PartnerReferrer", fields: [referredByPartnerId], references: [id])
+  referredPartners    ChannelPartner[] @relation("PartnerReferrer")
+  status           UserStatus @default(ACTIVE)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  bookingsReferred     Booking[]
+  leadsAssigned        Lead[]
+  tierAchievements     TierAchievement[]
+  rewardAchievements   RewardAchievement[]
+  royaltyAllocations   RoyaltyAllocation[]
+  rewardAllocations    RewardAllocation[]
+  payoutsReceived      Payout[]            @relation("PartnerBeneficiary")
+  generationAsPartner  GenerationRelation[] @relation("GenPartner")
+  generationAsRelated  GenerationRelation[] @relation("GenRelated")
+  balanceSheetLedgers  BalanceSheetLedger[]
+  documents            Document[]          @relation("PartnerDocuments")
+
+  @@index([partnerCode])
+}
+
+// Structural multi-generation relation used ONLY for Balance Sheet input/output
+// calculation. Never exposed to any UI as "tree/binary/leg/upline/downline".
+model GenerationRelation {
+  id               String         @id @default(uuid())
+  partnerId        String
+  partner          ChannelPartner @relation("GenPartner", fields: [partnerId], references: [id])
+  relatedPartnerId String
+  relatedPartner   ChannelPartner @relation("GenRelated", fields: [relatedPartnerId], references: [id])
+  generationLevel  Int
+  createdAt        DateTime       @default(now())
+
+  @@unique([partnerId, relatedPartnerId])
+  @@index([partnerId, generationLevel])
+}
+
+enum LeadSource {
+  META_ADS
+  GOOGLE_ADS
+  WHATSAPP
+  DIRECT
+  REFERRAL
+  OTHER
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  SITE_VISIT_SCHEDULED
+  CONVERTED
+  DUPLICATE
+  REJECTED
+}
+
+model Lead {
+  id                  String     @id @default(uuid())
+  name                String
+  phone               String
+  dedupeKey           String // normalized phone, used for intelligent dedupe
+  source              LeadSource
+  campaign            String?
+  utmSource           String?
+  utmMedium           String?
+  utmCampaign         String?
+  preferredProjectId  String?
+  preferredProject    Project?   @relation(fields: [preferredProjectId], references: [id])
+  preferredPlotSize   String?
+  preferredVisitDate  DateTime?
+  message             String?
+  consentGiven        Boolean    @default(false)
+  consentAt           DateTime?
+  status              LeadStatus @default(NEW)
+  assignedPartnerId   String?
+  assignedPartner     ChannelPartner? @relation(fields: [assignedPartnerId], references: [id])
+  convertedCustomerId String?
+  duplicateOfLeadId   String?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  @@index([dedupeKey])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PROJECT / PLOT / BOOKING
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  SOLD_OUT
+  CLOSED
+}
+
+model Project {
+  id          String        @id @default(uuid())
+  name        String
+  slug        String        @unique
+  location    String
+  description String?
+  hasRoads       Boolean @default(true)
+  hasElectricity Boolean @default(true)
+  hasWater       Boolean @default(true)
+  hasPark        Boolean @default(true)
+  hasMarket      Boolean @default(true)
+  hasGuestHouse  Boolean @default(true)
+  status      ProjectStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  plots  Plot[]
+  leads  Lead[]
+
+  @@index([status])
+}
+
+enum PlotStatus {
+  AVAILABLE
+  RESERVED
+  BOOKED
+  SOLD
+  BLOCKED
+}
+
+model Plot {
+  id                    String     @id @default(uuid())
+  projectId             String
+  project               Project    @relation(fields: [projectId], references: [id])
+  plotNumber            String
+  sizeGaj               Int
+  ratePerGajPaise       BigInt
+  plotAmountPaise       BigInt // = sizeGaj * ratePerGajPaise, computed at creation, immutable
+  registrationAmountPaise BigInt @default(100000) // ₹1,000
+  totalCustomerAmountPaise BigInt // = plotAmountPaise + registrationAmountPaise
+  isCashPlot            Boolean    @default(true)
+  roiEligible           Boolean    @default(false)
+  status                PlotStatus @default(AVAILABLE)
+  createdAt             DateTime   @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  bookings Booking[]
+
+  @@unique([projectId, plotNumber])
+  @@index([status])
+}
+
+enum BookingStatus {
+  DRAFT
+  RESERVED
+  BOOKED
+  PAYMENT_IN_PROGRESS
+  FULLY_COLLECTED
+  REGISTERED
+  COMPLETED
+  CANCELLED
+  REFUND_INITIATED
+  REFUNDED
+}
+
+model Booking {
+  id                          String        @id @default(uuid())
+  plotId                      String
+  plot                        Plot          @relation(fields: [plotId], references: [id])
+  customerId                  String
+  customer                    Customer      @relation(fields: [customerId], references: [id])
+  partnerId                   String?
+  partner                     ChannelPartner? @relation(fields: [partnerId], references: [id])
+  status                      BookingStatus @default(DRAFT)
+  bookingDate                 DateTime      @default(now())
+  plotAmountSnapshotPaise     BigInt
+  registrationAmountSnapshotPaise BigInt
+  totalCustomerAmountSnapshotPaise BigInt
+  roiEligible                 Boolean       @default(false)
+  cancelledAt                 DateTime?
+  cancelReason                String?
+  refundedAt                  DateTime?
+  fullyCollectedAt            DateTime?
+  registeredAt                DateTime?
+  completedAt                 DateTime?
+  createdAt                   DateTime      @default(now())
+  updatedAt                   DateTime      @updatedAt
+
+  paymentSchedules PaymentSchedule[]
+  payments         Payment[]
+  collection       Collection?
+  registration     Registration?
+  referral         Referral?
+  roiSchedule      RoiScheduleEntry[]
+  refunds          Refund[]
+  tierAchievementsQualified   TierAchievement[]
+  rewardAchievementsQualified RewardAchievement[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([partnerId])
+}
+
+model PaymentSchedule {
+  id                String    @id @default(uuid())
+  bookingId         String
+  booking           Booking   @relation(fields: [bookingId], references: [id])
+  installmentNumber Int
+  dueDate           DateTime
+  percentBps        Int // e.g. 3000 = 30%
+  amountDuePaise    BigInt
+  status            String    @default("PENDING") // PENDING|DUE|PARTIALLY_PAID|PAID|OVERDUE
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  payments Payment[]
+
+  @@unique([bookingId, installmentNumber])
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  UPI
+  CHEQUE
+  ONLINE_GATEWAY
+}
+
+enum PaymentStatus {
+  INITIATED
+  PENDING
+  VERIFIED
+  COLLECTED
+  FAILED
+  REFUNDED
+}
+
+model Payment {
+  id                String          @id @default(uuid())
+  bookingId         String
+  booking           Booking         @relation(fields: [bookingId], references: [id])
+  paymentScheduleId String?
+  paymentSchedule   PaymentSchedule? @relation(fields: [paymentScheduleId], references: [id])
+  amountPaise       BigInt
+  method            PaymentMethod
+  status            PaymentStatus   @default(INITIATED)
+  idempotencyKey    String          @unique
+  gatewayReference  String?
+  initiatedAt       DateTime        @default(now())
+  verifiedAt        DateTime?
+  collectedAt       DateTime?
+  failedAt          DateTime?
+  refundedAt        DateTime?
+  verifiedByUserId  String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([bookingId])
+  @@index([status])
+}
+
+model Collection {
+  id                     String   @id @default(uuid())
+  bookingId              String   @unique
+  booking                Booking  @relation(fields: [bookingId], references: [id])
+  confirmedByUserId      String
+  confirmedAt            DateTime @default(now())
+  totalCollectedSnapshotPaise BigInt
+  note                   String?
+}
+
+model Registration {
+  id                 String   @id @default(uuid())
+  bookingId          String   @unique
+  booking            Booking  @relation(fields: [bookingId], references: [id])
+  registrationNumber String?
+  registeredAt       DateTime @default(now())
+  registeredByUserId String
+  documentId         String?
+  createdAt          DateTime @default(now())
+}
+
+// Auditable attribution record — Booking.partnerId is the current pointer,
+// Referral is the append-only log of attribution events (including reassignment).
+model Referral {
+  id          String   @id @default(uuid())
+  bookingId   String   @unique
+  booking     Booking  @relation(fields: [bookingId], references: [id])
+  partnerId   String
+  referredAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+}
+
+enum DocumentOwnerType {
+  BOOKING
+  CUSTOMER
+  PARTNER
+  PROJECT
+  PAYMENT
+}
+
+enum DocumentType {
+  BOOKING_CONFIRMATION
+  AGREEMENT
+  RECEIPT
+  REGISTRATION_DOC
+  ROI_STATEMENT
+  ACCOUNT_STATEMENT
+  KYC
+  PROJECT_PHOTO
+  OTHER
+}
+
+model Document {
+  id             String            @id @default(uuid())
+  ownerType      DocumentOwnerType
+  ownerId        String
+  type           DocumentType
+  fileKey        String // storage object key; signed URLs generated on demand, never stored
+  fileName       String
+  mimeType       String
+  sizeBytes      Int
+  uploadedByUserId String
+  uploadedBy       User    @relation("DocumentUploadedBy", fields: [uploadedByUserId], references: [id])
+  customerId       String?
+  customer         Customer?       @relation("CustomerDocuments", fields: [customerId], references: [id])
+  partnerId        String?
+  partner          ChannelPartner? @relation("PartnerDocuments", fields: [partnerId], references: [id])
+  createdAt        DateTime        @default(now())
+
+  @@index([ownerType, ownerId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CLOSING CALENDAR (shared by Referral + Balance Sheet)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ClosingBusinessLine {
+  REFERRAL
+  BALANCE_SHEET
+}
+
+enum ClosingCycleLabel {
+  A_1_10
+  B_11_20
+  C_21_END
+}
+
+enum ClosingCycleStatus {
+  OPEN
+  CLOSED
+  SNAPSHOT_GENERATED
+  PAYOUT_SCHEDULED
+  AWAITING_PAYOUT_CONFIG
+}
+
+model ClosingCycle {
+  id             String              @id @default(uuid())
+  businessLine   ClosingBusinessLine
+  cycleYear      Int
+  cycleMonth     Int
+  cycleLabel     ClosingCycleLabel
+  startDate      DateTime
+  endDate        DateTime
+  closeDate      DateTime
+  payoutDueDate  DateTime?
+  status         ClosingCycleStatus @default(OPEN)
+  closedByUserId String?
+  closedAt       DateTime?
+  createdAt      DateTime           @default(now())
+
+  transactions TransactionClosingCycle[]
+  balanceSheetLedgers BalanceSheetLedger[]
+
+  @@unique([businessLine, cycleYear, cycleMonth, cycleLabel])
+  @@index([status])
+}
+
+model TransactionClosingCycle {
+  id             String       @id @default(uuid())
+  closingCycleId String
+  closingCycle   ClosingCycle @relation(fields: [closingCycleId], references: [id])
+  sourceType     String // PAYMENT | BALANCE_SHEET_INPUT
+  sourceId       String
+  assignedAt     DateTime     @default(now())
+
+  @@unique([sourceType, sourceId])
+}
+
+// Transactions dated the 31st with no configured day31Policy land here instead
+// of being silently assigned to a cycle.
+model PendingCycleAssignment {
+  id         String   @id @default(uuid())
+  sourceType String
+  sourceId   String
+  reason     String
+  createdAt  DateTime @default(now())
+  resolvedAt DateTime?
+
+  @@unique([sourceType, sourceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// FINANCIAL LEDGER (single append-only source of truth)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum LedgerEntryType {
+  SALE
+  PAYMENT
+  COLLECTION
+  REFERRAL_COMMISSION
+  BALANCE_SHEET
+  ROI
+  ROYALTY_POOL
+  ROYALTY_ALLOCATION
+  REWARD_POOL
+  REWARD_ALLOCATION
+  ADMIN_DEDUCTION
+  TDS
+  REFUND
+  CHARGEBACK
+  ADJUSTMENT
+  PAYOUT
+}
+
+enum LedgerEntryStatus {
+  POSTED
+  VOID
+  REVERSED
+  ADJUSTED
+}
+
+model LedgerEntry {
+  id                String            @id @default(uuid())
+  type              LedgerEntryType
+  entryDate         DateTime          @default(now())
+  sourceType        String // e.g. "BOOKING","PAYMENT","ROYALTY_ALLOCATION","PAYOUT"
+  sourceId          String
+  ruleVersionType   String? // e.g. "CommissionRule","ROIRule"
+  ruleVersionId     String?
+  grossAmountPaise  BigInt
+  deductionAmountPaise BigInt @default(0)
+  netAmountPaise    BigInt
+  currency          String            @default("INR")
+  status            LedgerEntryStatus @default(POSTED)
+  idempotencyKey    String            @unique
+  reversalOfEntryId String?
+  createdByUserId   String?
+  createdAt         DateTime          @default(now())
+
+  balanceSheetLedger BalanceSheetLedger?
+
+  @@index([type, entryDate])
+  @@index([sourceType, sourceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// STREAM 1 — REFERRAL
+// ─────────────────────────────────────────────────────────────────────────
+
+model CommissionRule {
+  id                 String     @id @default(uuid())
+  version             Int
+  ratePercentBps       Int // 1000 = 10%
+  adminChargePercentBps Int // 500 = 5%
+  tdsPercentBps         Int // 200 = 2%
+  status               RuleStatus @default(FINAL)
+  effectiveFrom        DateTime
+  effectiveTo          DateTime?
+  createdByUserId      String
+  approvedByUserId     String?
+  previousVersionId    String?
+  changeNote           String?
+  createdAt            DateTime   @default(now())
+
+  @@index([effectiveFrom])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// STREAM 2 — CASH PLOT ROI
+// ─────────────────────────────────────────────────────────────────────────
+
+enum RoiCalculationBase {
+  PLOT_AMOUNT
+  COLLECTED_TO_DATE
+  CUSTOMER_TOTAL
+}
+
+enum RoiStartTrigger {
+  BOOKING_DATE
+  FULL_COLLECTION_DATE
+  REGISTRATION_DATE
+}
+
+model ROIRule {
+  id                String             @id @default(uuid())
+  version           Int
+  projectId         String? // null = applies globally
+  ratePercentBps    Int // 100 = 1%
+  maxMonths         Int                @default(12)
+  calculationBase   RoiCalculationBase @default(PLOT_AMOUNT)
+  startTrigger      RoiStartTrigger    @default(FULL_COLLECTION_DATE)
+  status            RuleStatus         @default(PENDING_CEO_APPROVAL)
+  effectiveFrom     DateTime
+  effectiveTo       DateTime?
+  createdByUserId   String
+  approvedByUserId  String?
+  previousVersionId String?
+  changeNote        String?
+  createdAt         DateTime           @default(now())
+
+  @@index([effectiveFrom])
+}
+
+model RoiScheduleEntry {
+  id               String   @id @default(uuid())
+  bookingId        String
+  booking          Booking  @relation(fields: [bookingId], references: [id])
+  monthNumber      Int // 1..12
+  roiRuleId        String
+  baseAmountPaise  BigInt
+  amountPaise      BigInt
+  status           String   @default("PENDING") // PENDING|CREDITED|PAID|STOPPED|REVERSED
+  ledgerEntryId    String?  @unique
+  createdAt        DateTime @default(now())
+
+  @@unique([bookingId, monthNumber])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// STREAM 3 — BALANCE SHEET
+// ─────────────────────────────────────────────────────────────────────────
+
+model BalanceSheetRule {
+  id                String     @id @default(uuid())
+  version           Int
+  ratePercentBps    Int // 800 = 8%
+  payoutTimingConfigured Boolean @default(false)
+  payoutTimingRuleJson   Json?  // set once Super Admin configures it
+  status            RuleStatus @default(CONFIGURED)
+  effectiveFrom     DateTime
+  effectiveTo       DateTime?
+  createdByUserId   String
+  approvedByUserId  String?
+  previousVersionId String?
+  changeNote        String?
+  createdAt         DateTime   @default(now())
+
+  @@index([effectiveFrom])
+}
+
+model BalanceSheetLedger {
+  id                   String         @id @default(uuid())
+  ledgerEntryId        String         @unique
+  ledgerEntry          LedgerEntry    @relation(fields: [ledgerEntryId], references: [id])
+  partnerId            String
+  partner              ChannelPartner @relation(fields: [partnerId], references: [id])
+  closingCycleId        String
+  closingCycle          ClosingCycle @relation(fields: [closingCycleId], references: [id])
+  inputAmountPaise      BigInt
+  outputAmountPaise     BigInt
+  balanceAmountPaise    BigInt
+  carryForwardAmountPaise BigInt @default(0)
+  createdAt             DateTime @default(now())
+
+  @@index([partnerId])
+  @@index([closingCycleId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// STREAM 4 — ROYALTY
+// ─────────────────────────────────────────────────────────────────────────
+
+enum RoyaltyActivationTiming {
+  IMMEDIATE
+  NEXT_MONTHLY_PERIOD
+}
+
+enum RoyaltySupersessionTiming {
+  IMMEDIATE
+  FINISH_CURRENT_DURATION
+}
+
+model RoyaltyPoolRule {
+  id                 String                     @id @default(uuid())
+  version            Int
+  poolPercentBps     Int // 200 = 2%
+  activationTiming   RoyaltyActivationTiming    @default(NEXT_MONTHLY_PERIOD)
+  supersessionTiming RoyaltySupersessionTiming  @default(IMMEDIATE)
+  status             RuleStatus                 @default(PENDING_CEO_APPROVAL)
+  effectiveFrom      DateTime
+  effectiveTo        DateTime?
+  createdByUserId    String
+  approvedByUserId   String?
+  previousVersionId  String?
+  changeNote         String?
+  createdAt          DateTime                   @default(now())
+
+  @@index([effectiveFrom])
+}
+
+model RoyaltyTierRule {
+  id                    String     @id @default(uuid())
+  version               Int
+  tierCode              String // "01".."08"
+  tierName               String
+  achievementLeft         Int
+  achievementRight        Int
+  royaltyDurationMonths   Int
+  status                 RuleStatus @default(FINAL)
+  effectiveFrom           DateTime
+  effectiveTo             DateTime?
+  createdByUserId         String
+  approvedByUserId        String?
+  previousVersionId       String?
+  createdAt               DateTime  @default(now())
+
+  achievements TierAchievement[]
+
+  @@index([tierCode, effectiveFrom])
+}
+
+enum TierAchievementStatus {
+  ACHIEVED
+  ACTIVE
+  SUPERSEDED
+  EXPIRED
+}
+
+model TierAchievement {
+  id                    String                 @id @default(uuid())
+  partnerId             String
+  partner               ChannelPartner         @relation(fields: [partnerId], references: [id])
+  royaltyTierRuleId     String
+  royaltyTierRule       RoyaltyTierRule        @relation(fields: [royaltyTierRuleId], references: [id])
+  achievedAt            DateTime               @default(now())
+  qualifyingBookingId   String
+  qualifyingBooking     Booking                @relation(fields: [qualifyingBookingId], references: [id])
+  fullCashConditionMet  Boolean                @default(false)
+  royaltyStartDate      DateTime?
+  royaltyEndDate        DateTime?
+  status                TierAchievementStatus  @default(ACHIEVED)
+  supersededByAchievementId String?
+  createdAt             DateTime               @default(now())
+
+  allocations RoyaltyAllocation[]
+
+  @@index([partnerId, status])
+}
+
+model RoyaltySnapshot {
+  id                  String   @id @default(uuid())
+  periodYear          Int
+  periodMonth         Int
+  monthlyTurnoverPaise BigInt
+  poolPercentBps       Int
+  poolAmountPaise       BigInt
+  royaltyPoolRuleId     String
+  status                String   @default("DRAFT") // DRAFT | FINALIZED
+  finalizedAt           DateTime?
+  finalizedByUserId     String?
+  createdAt              DateTime @default(now())
+
+  allocations RoyaltyAllocation[]
+
+  @@unique([periodYear, periodMonth])
+}
+
+model RoyaltyAllocation {
+  id                 String          @id @default(uuid())
+  snapshotId         String
+  snapshot           RoyaltySnapshot @relation(fields: [snapshotId], references: [id])
+  partnerId          String
+  partner            ChannelPartner  @relation(fields: [partnerId], references: [id])
+  tierAchievementId  String
+  tierAchievement    TierAchievement @relation(fields: [tierAchievementId], references: [id])
+  tierCode           String
+  // Total number of eligible achievers (company-wide, across all tiers, de-duplicated
+  // to one ACTIVE tier per partner) that split this period's pool — see the "3% Reward
+  // Pool vs fixed values" / royalty pool-split note in docs/01-business-rules-matrix.md
+  // addendum for why the split is company-wide-equal rather than sub-pooled per tier.
+  periodEligibleCount Int
+  allocatedAmountPaise BigInt
+  ledgerEntryId       String  @unique
+  createdAt            DateTime @default(now())
+
+  @@unique([snapshotId, partnerId, tierCode])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// STREAM 5 — REWARDS
+// ─────────────────────────────────────────────────────────────────────────
+
+enum RewardPoolBase {
+  MONTHLY_TURNOVER
+  GROSS_BOOKING_VALUE
+  COLLECTED_CASH
+}
+
+model RewardPoolRule {
+  id                String         @id @default(uuid())
+  version           Int
+  poolPercentBps    Int // 300 = 3%
+  poolBase          RewardPoolBase @default(MONTHLY_TURNOVER)
+  status            RuleStatus     @default(PENDING_CEO_APPROVAL)
+  effectiveFrom     DateTime
+  effectiveTo       DateTime?
+  createdByUserId   String
+  approvedByUserId  String?
+  previousVersionId String?
+  changeNote        String?
+  createdAt         DateTime       @default(now())
+
+  @@index([effectiveFrom])
+}
+
+// Monthly liability/funding tracking for the 3% pool — informational reconciliation
+// against the FIXED catalogue reward values below; the pool does NOT get split
+// the way the Royalty pool does (see docs/01-business-rules-matrix.md §6).
+model RewardPoolPeriod {
+  id                  String   @id @default(uuid())
+  periodYear          Int
+  periodMonth         Int
+  monthlyTurnoverPaise BigInt
+  poolPercentBps       Int
+  poolAmountPaise       BigInt
+  allocatedAmountPaise  BigInt   @default(0)
+  rewardPoolRuleId      String
+  status                String   @default("DRAFT")
+  finalizedAt            DateTime?
+  finalizedByUserId      String?
+  createdAt               DateTime @default(now())
+
+  @@unique([periodYear, periodMonth])
+}
+
+model RewardMilestoneRule {
+  id                String     @id @default(uuid())
+  version           Int
+  tierCode          String // matches RoyaltyTierRule.tierCode
+  tierName          String
+  achievementLeft   Int
+  achievementRight  Int
+  rewardName        String
+  rewardValuePaise  BigInt
+  status            RuleStatus @default(FINAL)
+  effectiveFrom     DateTime
+  effectiveTo       DateTime?
+  createdByUserId   String
+  approvedByUserId  String?
+  previousVersionId String?
+  createdAt         DateTime   @default(now())
+
+  achievements RewardAchievement[]
+
+  @@index([tierCode, effectiveFrom])
+}
+
+enum RewardAchievementStatus {
+  ELIGIBLE
+  ALLOCATED
+  REVERSED
+}
+
+model RewardAchievement {
+  id                    String                   @id @default(uuid())
+  partnerId             String
+  partner               ChannelPartner           @relation(fields: [partnerId], references: [id])
+  rewardMilestoneRuleId String
+  rewardMilestoneRule   RewardMilestoneRule      @relation(fields: [rewardMilestoneRuleId], references: [id])
+  achievedAt            DateTime                 @default(now())
+  qualifyingBookingId   String
+  qualifyingBooking     Booking                  @relation(fields: [qualifyingBookingId], references: [id])
+  status                RewardAchievementStatus  @default(ELIGIBLE)
+  createdAt             DateTime                 @default(now())
+
+  allocation RewardAllocation?
+
+  @@unique([partnerId, rewardMilestoneRuleId])
+}
+
+model RewardAllocation {
+  id                  String            @id @default(uuid())
+  rewardAchievementId String            @unique
+  rewardAchievement   RewardAchievement @relation(fields: [rewardAchievementId], references: [id])
+  partnerId           String
+  partner             ChannelPartner    @relation(fields: [partnerId], references: [id])
+  amountPaise         BigInt
+  ledgerEntryId       String            @unique
+  createdAt           DateTime          @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PAYOUT ENGINE
+// ─────────────────────────────────────────────────────────────────────────
+
+enum PayoutType {
+  REFERRAL
+  BALANCE_SHEET
+  ROYALTY
+  REWARD
+  ROI
+}
+
+enum PayoutStatus {
+  PENDING
+  ELIGIBLE
+  APPROVED
+  PROCESSING
+  PAID
+  HELD
+  REVERSED
+  CANCELLED
+}
+
+model PayoutBatch {
+  id               String     @id @default(uuid())
+  payoutType       PayoutType
+  closingCycleId   String?
+  generatedByUserId String
+  generatedAt      DateTime   @default(now())
+  totalGrossPaise  BigInt
+  totalNetPaise    BigInt
+  itemCount        Int
+  status           String     @default("OPEN")
+
+  payouts Payout[]
+}
+
+model Payout {
+  id                    String       @id @default(uuid())
+  payoutType            PayoutType
+  beneficiaryPartnerId  String?
+  beneficiaryPartner    ChannelPartner? @relation("PartnerBeneficiary", fields: [beneficiaryPartnerId], references: [id])
+  beneficiaryCustomerId String?
+  beneficiaryCustomer   Customer?    @relation("CustomerBeneficiary", fields: [beneficiaryCustomerId], references: [id])
+  sourceLedgerEntryId   String
+  ruleVersionType       String
+  ruleVersionId         String
+  grossAmountPaise      BigInt
+  adminDeductionPaise   BigInt       @default(0)
+  tdsPaise              BigInt       @default(0)
+  netAmountPaise        BigInt
+  status                PayoutStatus @default(PENDING)
+  idempotencyKey        String       @unique
+  batchId               String?
+  batch                 PayoutBatch? @relation(fields: [batchId], references: [id])
+  createdAt             DateTime     @default(now())
+  approvedAt            DateTime?
+  approvedByUserId      String?
+  approverIp            String?
+  approverDevice        String?
+  paidAt                DateTime?
+  paymentReference      String?
+  holdReason            String?
+  reversedAt             DateTime?
+  reversalLedgerEntryId  String?
+
+  taxDeduction TaxDeduction?
+
+  @@index([payoutType, status])
+  @@index([beneficiaryPartnerId])
+  @@index([beneficiaryCustomerId])
+}
+
+model TaxDeduction {
+  id                   String   @id @default(uuid())
+  payoutId             String   @unique
+  payout               Payout   @relation(fields: [payoutId], references: [id])
+  financialYear        String
+  section               String  @default("194H")
+  amountPaise           BigInt
+  certificateDocumentId String?
+  createdAt              DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CLOSING CALENDAR RULE (day-31 / short month policy)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum Day31Policy {
+  UNSET
+  EXTEND_CYCLE_C
+  ROLLS_TO_NEXT_CYCLE
+}
+
+model ClosingCalendarRule {
+  id                String      @id @default(uuid())
+  version           Int
+  day31Policy       Day31Policy @default(UNSET)
+  shortMonthPolicy  String      @default("END_OF_MONTH")
+  status            RuleStatus  @default(PENDING_CEO_APPROVAL)
+  effectiveFrom     DateTime
+  effectiveTo       DateTime?
+  createdByUserId   String
+  approvedByUserId  String?
+  previousVersionId String?
+  changeNote        String?
+  createdAt         DateTime    @default(now())
+
+  @@index([effectiveFrom])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ADJUSTMENTS / REFUNDS
+// ─────────────────────────────────────────────────────────────────────────
+
+enum AdjustmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  APPLIED
+}
+
+model Adjustment {
+  id                   String           @id @default(uuid())
+  targetLedgerEntryId  String?
+  targetPayoutId       String?
+  reason               String
+  amountPaise          BigInt // signed: positive = credit, negative = debit
+  status               AdjustmentStatus @default(PENDING)
+  createdByUserId      String
+  approvedByUserId     String?
+  appliedLedgerEntryId String?
+  createdAt            DateTime         @default(now())
+  resolvedAt            DateTime?
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  PROCESSED
+  REJECTED
+}
+
+model Refund {
+  id                 String       @id @default(uuid())
+  bookingId          String
+  booking            Booking      @relation(fields: [bookingId], references: [id])
+  paymentId          String?
+  amountPaise        BigInt
+  reason             String
+  status             RefundStatus @default(REQUESTED)
+  requestedByUserId  String
+  approvedByUserId   String?
+  processedAt        DateTime?
+  ledgerEntryId      String?
+  createdAt          DateTime     @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// NOTIFICATIONS / AUDIT / SETTINGS
+// ─────────────────────────────────────────────────────────────────────────
+
+model Notification {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+  channel           String // SMS|EMAIL|IN_APP|WHATSAPP
+  category          String
+  title             String
+  body              String
+  status            String   @default("QUEUED") // QUEUED|SENT|FAILED|READ
+  relatedEntityType String?
+  relatedEntityId   String?
+  createdAt         DateTime @default(now())
+  sentAt            DateTime?
+  readAt            DateTime?
+
+  @@index([userId, status])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorUserId  String?
+  actor        User?    @relation("AuditActor", fields: [actorUserId], references: [id])
+  actorRole    String?
+  action       String
+  entityType   String
+  entityId     String?
+  beforeJson   Json?
+  afterJson    Json?
+  ipAddress    String?
+  userAgent    String?
+  deviceId     String?
+  createdAt    DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorUserId])
+  @@index([createdAt])
+}
+
+model SystemSetting {
+  id              String   @id @default(uuid())
+  key             String   @unique
+  value           Json
+  updatedByUserId String?
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+}
