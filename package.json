@@ -1,0 +1,23 @@
+{
+  "name": "mera-makan",
+  "private": true,
+  "version": "0.1.0",
+  "description": "MERA MAKAN real-estate + channel-partner platform",
+  "scripts": {
+    "dev:api": "pnpm --filter @mera/api dev",
+    "dev:web": "pnpm --filter @mera/web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm --filter @mera/api test",
+    "test:watch": "pnpm --filter @mera/api test:watch",
+    "lint": "pnpm -r lint",
+    "prisma:generate": "pnpm --filter @mera/api prisma:generate",
+    "prisma:migrate": "pnpm --filter @mera/api prisma:migrate",
+    "prisma:seed": "pnpm --filter @mera/api prisma:seed",
+    "check:forbidden-terms": "tsx scripts/check-forbidden-terms.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@10.33.0"
+}
