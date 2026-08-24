@@ -223,11 +223,22 @@ async function main() {
     });
   }
 
-  // ---------- Demo customer & partner (known phone numbers for OTP login demo) ----------
+  // ---------- Demo customer & partner ----------
+  // No SMS gateway is configured for this deployment, so demo accounts use
+  // the same admin-created email+password login as real accounts (see
+  // POST /admin/customers, /admin/partners) rather than OTP.
+  const demoPasswordHash = await passwordService.hash("ChangeMe123!");
+
   const customerUser = await prisma.user.upsert({
-    where: { phone: "+919990000001" },
+    where: { email: "ravi.demo@meramakan.test" },
     update: {},
-    create: { role: "CUSTOMER", phone: "+919990000001", status: "ACTIVE" },
+    create: {
+      role: "CUSTOMER",
+      email: "ravi.demo@meramakan.test",
+      phone: "+919990000001",
+      passwordHash: demoPasswordHash,
+      status: "ACTIVE",
+    },
   });
   await prisma.customer.upsert({
     where: { userId: customerUser.id },
@@ -236,9 +247,15 @@ async function main() {
   });
 
   const partnerUser = await prisma.user.upsert({
-    where: { phone: "+919990000002" },
+    where: { email: "anita.demo@meramakan.test" },
     update: {},
-    create: { role: "CHANNEL_PARTNER", phone: "+919990000002", status: "ACTIVE" },
+    create: {
+      role: "CHANNEL_PARTNER",
+      email: "anita.demo@meramakan.test",
+      phone: "+919990000002",
+      passwordHash: demoPasswordHash,
+      status: "ACTIVE",
+    },
   });
   await prisma.channelPartner.upsert({
     where: { userId: partnerUser.id },
@@ -247,11 +264,10 @@ async function main() {
   });
 
   console.log("Seed complete.");
-  console.log("  Super Admin login: ceo@meramakan.test / ChangeMe123!");
+  console.log("  Super Admin login:   ceo@meramakan.test / ChangeMe123!");
   console.log("  Finance Admin login: finance@meramakan.test / ChangeMe123!");
-  console.log("  Demo customer phone (OTP): +919990000001");
-  console.log("  Demo partner phone (OTP):  +919990000002");
-  console.log("  (Dev OTP code is fixed via OTP_DEV_STATIC_CODE, default 123456)");
+  console.log("  Demo customer login: ravi.demo@meramakan.test / ChangeMe123!");
+  console.log("  Demo partner login:  anita.demo@meramakan.test / ChangeMe123!");
   void financeAdmin;
 }
 
