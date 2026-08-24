@@ -6,6 +6,9 @@ import { clearSession } from "@/lib/api";
 
 const LINKS = [
   { href: "/admin/dashboard", label: "Dashboard" },
+  { href: "/admin/bookings", label: "Bookings" },
+  { href: "/admin/customers", label: "Customers" },
+  { href: "/admin/partners", label: "Partners" },
   { href: "/admin/business-rules", label: "Business Rules" },
 ];
 

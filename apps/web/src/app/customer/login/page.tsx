@@ -1,5 +1,5 @@
-import { OtpLogin } from "@/components/OtpLogin";
+import { PasswordLogin } from "@/components/PasswordLogin";
 
 export default function CustomerLoginPage() {
-  return <OtpLogin title="Customer Login" redirectTo="/customer/dashboard" />;
+  return <PasswordLogin title="Customer Login" redirectTo="/customer/dashboard" />;
 }

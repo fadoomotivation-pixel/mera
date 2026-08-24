@@ -1,5 +1,5 @@
-import { OtpLogin } from "@/components/OtpLogin";
+import { PasswordLogin } from "@/components/PasswordLogin";
 
 export default function PartnerLoginPage() {
-  return <OtpLogin title="Channel Partner Login" redirectTo="/partner/dashboard" />;
+  return <PasswordLogin title="Channel Partner Login" redirectTo="/partner/dashboard" />;
 }
