@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, formatPaise, clearSession } from "@/lib/api";
-import { useAuthGuard } from "@/lib/useAuthGuard";
+import { api, formatPaise } from "@/lib/api";
+import { useSurfaceGuard, signOut } from "@/lib/useAuthGuard";
 import { StatusPill } from "@/components/StatusPill";
 
 interface Dashboard {
@@ -16,7 +16,7 @@ interface Dashboard {
 }
 
 export default function PartnerDashboard() {
-  const ready = useAuthGuard("CHANNEL_PARTNER", "/partner/login");
+  const ready = useSurfaceGuard("partner");
   const [data, setData] = useState<Dashboard | null>(null);
 
   useEffect(() => {
@@ -35,8 +35,7 @@ export default function PartnerDashboard() {
         </div>
         <button
           onClick={() => {
-            clearSession();
-            window.location.href = "/partner/login";
+            signOut();
           }}
           className="text-sm text-ink-700 hover:text-brand-700"
         >

@@ -66,7 +66,7 @@ export default function PartnerProgrammePage() {
               <ButtonLink href="#apply" variant="gold" size="lg">
                 Become a channel partner
               </ButtonLink>
-              <ButtonLink href="/partner/login" variant="onNavy" size="lg">
+              <ButtonLink href="/login" variant="onNavy" size="lg">
                 Partner sign in
               </ButtonLink>
             </div>

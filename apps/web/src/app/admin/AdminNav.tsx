@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { clearSession } from "@/lib/api";
+import { signOut } from "@/lib/useAuthGuard";
 
 const LINKS = [
   { href: "/admin/dashboard", label: "Dashboard" },
@@ -29,8 +29,7 @@ export function AdminNav() {
         </div>
         <button
           onClick={() => {
-            clearSession();
-            window.location.href = "/admin/login";
+            signOut();
           }}
           className="text-sm text-white/70 hover:text-white"
         >

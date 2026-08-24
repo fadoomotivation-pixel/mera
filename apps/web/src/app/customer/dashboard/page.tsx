@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, formatPaise, clearSession } from "@/lib/api";
-import { useAuthGuard } from "@/lib/useAuthGuard";
+import { api, formatPaise } from "@/lib/api";
+import { useSurfaceGuard, signOut } from "@/lib/useAuthGuard";
 
 interface Booking {
   id: string;
@@ -17,7 +17,7 @@ interface Booking {
 }
 
 export default function CustomerDashboard() {
-  const ready = useAuthGuard("CUSTOMER", "/customer/login");
+  const ready = useSurfaceGuard("customer");
   const [bookings, setBookings] = useState<Booking[] | null>(null);
 
   useEffect(() => {
@@ -36,8 +36,7 @@ export default function CustomerDashboard() {
         </div>
         <button
           onClick={() => {
-            clearSession();
-            window.location.href = "/customer/login";
+            signOut();
           }}
           className="text-sm text-ink-700 hover:text-brand-700"
         >

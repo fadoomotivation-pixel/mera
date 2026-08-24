@@ -34,7 +34,7 @@ export function SiteHeader() {
 
         <div className="flex items-center gap-3">
           <Link
-            href="/customer/login"
+            href="/login"
             className="hidden text-sm font-medium text-ivory-50/70 transition hover:text-ivory-50 sm:block"
           >
             Sign in
@@ -76,7 +76,7 @@ export function SiteHeader() {
               <ButtonLink href="/#visit" variant="gold" size="md">
                 Book a site visit
               </ButtonLink>
-              <ButtonLink href="/customer/login" variant="onNavy" size="md">
+              <ButtonLink href="/login" variant="onNavy" size="md">
                 Sign in
               </ButtonLink>
             </div>
@@ -111,8 +111,7 @@ export function SiteFooter() {
           <FooterCol
             title="Portals"
             links={[
-              { href: "/customer/login", label: "Customer sign in" },
-              { href: "/partner/login", label: "Channel partner sign in" },
+              { href: "/login", label: "Sign in" },
               { href: "/partner-programme", label: "Become a partner" },
             ]}
           />

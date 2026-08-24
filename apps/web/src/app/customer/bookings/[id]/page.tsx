@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api, formatPaise } from "@/lib/api";
-import { useAuthGuard } from "@/lib/useAuthGuard";
+import { useSurfaceGuard } from "@/lib/useAuthGuard";
 
 interface BookingDetail {
   id: string;
@@ -42,7 +42,7 @@ interface RoiSummary {
 }
 
 export default function BookingDetailPage() {
-  const ready = useAuthGuard("CUSTOMER", "/customer/login");
+  const ready = useSurfaceGuard("customer");
   const params = useParams<{ id: string }>();
   const [booking, setBooking] = useState<BookingDetail | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
