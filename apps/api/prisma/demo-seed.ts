@@ -83,7 +83,7 @@ async function main() {
 
   const superAdmin = await prisma.user.findUniqueOrThrow({ where: { email: "ceo@meramakan.test" } });
   const finance = await prisma.user.findUniqueOrThrow({ where: { email: "finance@meramakan.test" } });
-  const project = await prisma.project.findUniqueOrThrow({ where: { slug: "sunrise-society" } });
+  const project = await prisma.project.findUniqueOrThrow({ where: { slug: "shyam-vatika" } });
   const passwordHash = await passwordService.hash(DEMO_PASSWORD);
 
   /* ── Inventory ────────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ async function main() {
       },
     });
   }
-  console.log("  ✓ 24 plots in Sunrise Society");
+  console.log("  ✓ 24 plots in Shyam Vatika");
 
   /* ── Partners ─────────────────────────────────────────────────────────── */
   const partnerIdByCode = new Map<string, string>();
@@ -160,7 +160,7 @@ async function main() {
     const customer = await prisma.customer.upsert({
       where: { userId: user.id },
       update: {},
-      create: { userId: user.id, name: c.name, address: "Sonipat, Haryana" },
+      create: { userId: user.id, name: c.name, address: "Sikar, Rajasthan" },
     });
     customerIdByKey.set(c.key, customer.id);
   }

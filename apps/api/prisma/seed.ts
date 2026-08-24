@@ -190,13 +190,13 @@ async function main() {
 
   // ---------- Project & Plots ----------
   const project = await prisma.project.upsert({
-    where: { slug: "sunrise-society" },
+    where: { slug: "shyam-vatika" },
     update: {},
     create: {
-      name: "Sunrise Society",
-      slug: "sunrise-society",
-      location: "Near NH-44, Sonipat",
-      description: "Fully developed society with roads, electricity, water, park, market and guest house.",
+      name: "Shyam Vatika",
+      slug: "shyam-vatika",
+      location: "Khatu Shyam Ji, Sikar, Rajasthan",
+      description: "Fully developed society near Khatu Shyam Dham — roads, electricity, water, park, market and guest house.",
       status: "ACTIVE",
     },
   });
