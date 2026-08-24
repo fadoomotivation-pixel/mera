@@ -2,29 +2,82 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --brand-gradient: linear-gradient(135deg, #7c451a 0%, #c9711f 55%, #f5a24a 100%);
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    /* Ivory, not white — white is reserved for raised surfaces so cards read
+       as material sitting on a ground rather than as outlined boxes. */
+    background-color: theme("colors.ivory.100");
+    color: theme("colors.navy.900");
+    font-feature-settings: "kern";
+  }
+
+  /* Money must never jitter as digits change, and columns must align. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Visible, deliberate focus — never removed, only styled. */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid theme("colors.gold.500");
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Respect the user's motion preference. Non-negotiable. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
-body {
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-}
+@layer components {
+  /* Section rhythm — one class so every page breathes identically. */
+  .shell {
+    @apply mx-auto w-full max-w-6xl px-gutter;
+  }
 
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.15rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  /* Skeletons: a quiet sweep, never a spinner. Financial values must never
+     flash a placeholder number that could be mistaken for a real balance. */
+  .skeleton {
+    background-image: linear-gradient(
+      90deg,
+      theme("colors.ivory.200") 0%,
+      theme("colors.ivory.50") 50%,
+      theme("colors.ivory.200") 100%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer rounded;
+  }
+
+  .skeleton-on-navy {
+    background-image: linear-gradient(
+      90deg,
+      theme("colors.navy.700") 0%,
+      theme("colors.navy.600") 50%,
+      theme("colors.navy.700") 100%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer rounded;
+  }
+
+  /* Hairlines instead of borders wherever a divider is genuinely needed. */
+  .hairline {
+    @apply border-navy-900/[0.08];
+  }
 }
-.status-PENDING { background: #f1f5f9; color: #475569; }
-.status-ELIGIBLE { background: #e0f2fe; color: #0369a1; }
-.status-APPROVED { background: #ede9fe; color: #6d28d9; }
-.status-PROCESSING { background: #fef9c3; color: #854d0e; }
-.status-PAID { background: #dcfce7; color: #15803d; }
-.status-HELD { background: #ffedd5; color: #c2410c; }
-.status-REVERSED { background: #fee2e2; color: #b91c1c; }
-.status-CANCELLED { background: #f1f5f9; color: #64748b; }
