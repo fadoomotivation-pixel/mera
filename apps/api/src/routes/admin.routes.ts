@@ -148,9 +148,15 @@ export async function adminRoutes(app: FastifyInstance) {
   // ---------- Projects & Plots (Operations) ----------
   app.post("/projects", async (req, reply) => {
     requireRole(claims(req), "SUPER_ADMIN", "OPERATIONS_ADMIN");
+    // The explicit `as` below pins the parsed shape to a concrete type instead
+    // of relying on TS to re-derive it through Zod's generics at every call
+    // site — Vercel's Node.js function builder runs its own separate
+    // TypeScript analysis pass that, for reasons not reproducible in any local
+    // or CI environment, resolves z.object(...).parse(...) here as fully
+    // optional even though the schema requires these fields.
     const body = z
       .object({ name: z.string(), slug: z.string(), location: z.string(), description: z.string().optional() })
-      .parse(req.body);
+      .parse(req.body) as { name: string; slug: string; location: string; description?: string };
     const project = await prisma.project.create({ data: body });
     reply.status(201).send(serializeBigInts(project));
   });
@@ -197,7 +203,7 @@ export async function adminRoutes(app: FastifyInstance) {
     requireRole(claims(req), "SUPER_ADMIN", "OPERATIONS_ADMIN");
     const body = z.object({ plotId: z.string().uuid(), customerId: z.string().uuid(), partnerId: z.string().uuid().optional() }).parse(
       req.body
-    );
+    ) as { plotId: string; customerId: string; partnerId?: string };
     const booking = await prisma.$transaction(async (tx) => {
       const b = await bookingService.createDraft(tx, body);
       await bookingService.reserve(tx, b.id);
@@ -246,7 +252,13 @@ export async function adminRoutes(app: FastifyInstance) {
         method: z.enum(["CASH", "BANK_TRANSFER", "UPI", "CHEQUE", "ONLINE_GATEWAY"]),
         idempotencyKey: z.string(),
       })
-      .parse(req.body);
+      .parse(req.body) as {
+      bookingId: string;
+      paymentScheduleId?: string;
+      amountPaise: string;
+      method: "CASH" | "BANK_TRANSFER" | "UPI" | "CHEQUE" | "ONLINE_GATEWAY";
+      idempotencyKey: string;
+    };
 
     const result = await prisma.$transaction(async (tx) => {
       const payment = await paymentService.initiate(tx, { ...body, amountPaise: BigInt(body.amountPaise) });
@@ -356,7 +368,7 @@ export async function adminRoutes(app: FastifyInstance) {
     requireRole(claims(req), ...FINANCIAL_WRITE_ROLES);
     const body = z
       .object({ partnerId: z.string().uuid(), qualifyingBookingId: z.string().uuid(), groupACount: z.number(), groupBCount: z.number() })
-      .parse(req.body);
+      .parse(req.body) as { partnerId: string; qualifyingBookingId: string; groupACount: number; groupBCount: number };
     const c = claims(req);
     const result = await prisma.$transaction((tx) => rewardService.evaluate(tx, { ...body, createdByUserId: c.sub }));
     reply.send(serializeBigInts(result));
