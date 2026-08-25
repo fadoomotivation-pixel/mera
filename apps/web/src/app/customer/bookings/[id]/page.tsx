@@ -3,8 +3,13 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { api, formatPaise } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useSurfaceGuard } from "@/lib/useAuthGuard";
+import { PortalShell } from "@/components/portal/PortalShell";
+import { CUSTOMER_NAV } from "@/components/portal/nav-items";
+import { RecordList, RecordListSkeleton, Section, Stat, StatGrid } from "@/components/portal/RecordList";
+import { Card, StatusPill, Progress, EmptyState } from "@/components/ui/primitives";
+import { Money } from "@/components/ui/Money";
 
 interface BookingDetail {
   id: string;
@@ -41,131 +46,154 @@ interface RoiSummary {
   totalRoiGeneratedPaise: string;
 }
 
+const shortDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
 export default function BookingDetailPage() {
   const ready = useSurfaceGuard("customer");
   const params = useParams<{ id: string }>();
   const [booking, setBooking] = useState<BookingDetail | null>(null);
-  const [payments, setPayments] = useState<Payment[]>([]);
+  const [payments, setPayments] = useState<Payment[] | null>(null);
   const [roi, setRoi] = useState<RoiSummary | null>(null);
 
   useEffect(() => {
     if (!ready) return;
-    api.get<BookingDetail>(`/api/v1/customer/bookings/${params.id}`).then(setBooking);
-    api.get<Payment[]>(`/api/v1/customer/bookings/${params.id}/payments`).then(setPayments);
+    api.get<BookingDetail>(`/api/v1/customer/bookings/${params.id}`).then(setBooking).catch(() => {});
+    api.get<Payment[]>(`/api/v1/customer/bookings/${params.id}/payments`).then(setPayments).catch(() => setPayments([]));
   }, [ready, params.id]);
 
   useEffect(() => {
     if (!ready || !booking?.roiEligible) return;
-    api
-      .get<RoiSummary>(`/api/v1/customer/bookings/${params.id}/roi`)
-      .then(setRoi)
-      .catch(() => setRoi(null));
+    api.get<RoiSummary>(`/api/v1/customer/bookings/${params.id}/roi`).then(setRoi).catch(() => setRoi(null));
   }, [ready, booking?.roiEligible, params.id]);
 
-  if (!ready || !booking) return null;
-
   return (
-    <main className="mx-auto max-w-3xl px-4 py-10">
-      <Link href="/customer/dashboard" className="text-sm text-brand-700 hover:underline">
-        ← My Bookings
+    <PortalShell nav={CUSTOMER_NAV}>
+      <Link
+        href="/customer/dashboard"
+        className="-ml-2 inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-sm text-navy-500 transition hover:text-navy-900"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+          <path d="m14 6-6 6 6 6" />
+        </svg>
+        My property
       </Link>
 
-      <h1 className="mt-2 text-2xl font-bold text-ink-900">
-        {booking.plot.project.name} — Plot {booking.plot.plotNumber}
-      </h1>
-      <div className="mt-2 flex gap-2">
-        <span className="status-pill status-ELIGIBLE">{booking.status.replace(/_/g, " ")}</span>
-        <span className="status-pill status-PENDING">Registry: {booking.registeredAt ? "Complete" : "Pending"}</span>
-      </div>
+      {!booking ? (
+        <div className="mt-4 space-y-4" aria-hidden>
+          <div className="skeleton h-8 w-2/3 rounded" />
+          <div className="skeleton h-40 rounded-card" />
+          <div className="skeleton h-32 rounded-card" />
+        </div>
+      ) : (
+        <>
+          <header className="mt-2">
+            <h1 className="font-display text-[1.75rem] font-bold leading-tight tracking-[-0.02em] text-navy-900 sm:text-display-md">
+              {booking.plot.project.name}
+            </h1>
+            <p className="mt-1 text-navy-500">
+              Plot {booking.plot.plotNumber} · {booking.plot.sizeGaj} Gaj
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <StatusPill status={booking.status} />
+              <span className="inline-flex items-center gap-1.5 rounded-pill bg-navy-900/[0.06] px-2.5 py-1 text-xs font-semibold text-navy-600">
+                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+                Registry {booking.registeredAt ? "complete" : "pending"}
+              </span>
+            </div>
+          </header>
 
-      <section className="mt-6 grid grid-cols-2 gap-4 rounded-2xl border border-brand-100 p-5 sm:grid-cols-4">
-        <Stat label="Plot Amount" value={formatPaise(booking.plotAmountSnapshotPaise)} />
-        <Stat label="Registration" value={formatPaise(booking.registrationAmountSnapshotPaise)} />
-        <Stat label="Paid" value={formatPaise(booking.paidPaise)} />
-        <Stat label="Outstanding" value={formatPaise(booking.outstandingPaise)} highlight />
-      </section>
+          {/* ── The one number that matters, then the supporting ones ──── */}
+          <Card tone="navy" className="mt-6 p-5 sm:p-7">
+            <p className="text-caption text-navy-200">Still to pay</p>
+            <p className="mt-1.5">
+              <Money paise={booking.outstandingPaise} size="xl" tone={booking.outstandingPaise === "0" ? "onNavy" : "gold"} />
+            </p>
+            <div className="mt-5">
+              <Progress
+                tone="gold"
+                value={Number(BigInt(booking.paidPaise) / 100n)}
+                max={Number(BigInt(booking.totalCustomerAmountSnapshotPaise) / 100n)}
+                label="Amount paid so far"
+              />
+              <div className="mt-2.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-caption text-navy-200">
+                <span>
+                  Paid <Money paise={booking.paidPaise} size="xs" tone="onNavy" />
+                </span>
+                <span>
+                  of <Money paise={booking.totalCustomerAmountSnapshotPaise} size="xs" tone="onNavy" />
+                </span>
+              </div>
+            </div>
+          </Card>
 
-      <section className="mt-8">
-        <h2 className="text-lg font-bold text-ink-900">Payment Schedule</h2>
-        <table className="mt-3 w-full text-sm">
-          <thead className="text-left text-ink-700">
-            <tr>
-              <th className="pb-2">#</th>
-              <th className="pb-2">Due Date</th>
-              <th className="pb-2">Amount</th>
-              <th className="pb-2">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {booking.paymentSchedules
-              .sort((a, b) => a.installmentNumber - b.installmentNumber)
-              .map((s) => (
-                <tr key={s.installmentNumber} className="border-t border-brand-100">
-                  <td className="py-2">{s.installmentNumber}</td>
-                  <td className="py-2">{new Date(s.dueDate).toLocaleDateString("en-IN")}</td>
-                  <td className="py-2">{formatPaise(s.amountDuePaise)}</td>
-                  <td className="py-2">
-                    <span className={`status-pill status-${s.status === "PAID" ? "PAID" : "PENDING"}`}>{s.status}</span>
-                  </td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
-      </section>
-
-      <section className="mt-8">
-        <h2 className="text-lg font-bold text-ink-900">Payment History</h2>
-        {payments.length === 0 && <p className="mt-2 text-sm text-ink-700">No payments recorded yet.</p>}
-        <ul className="mt-3 space-y-2">
-          {payments.map((p) => (
-            <li key={p.id} className="flex items-center justify-between rounded-xl border border-brand-100 px-4 py-2 text-sm">
-              <span>{p.method.replace(/_/g, " ")}</span>
-              <span>{formatPaise(p.amountPaise)}</span>
-              <span className={`status-pill status-${p.status === "COLLECTED" ? "PAID" : "PENDING"}`}>{p.status}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      {booking.roiEligible && roi && (
-        <section className="mt-8 rounded-2xl border border-brand-200 bg-brand-50 p-5">
-          <h2 className="text-lg font-bold text-ink-900">Cash Plot ROI</h2>
-          <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
-            <Stat label="Months Credited" value={String(roi.monthsCredited)} />
-            <Stat label="Months Remaining" value={String(roi.monthsRemaining)} />
-            <Stat label="Total ROI Generated" value={formatPaise(roi.totalRoiGeneratedPaise)} />
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-4">
+            <Stat label="Plot amount" paise={booking.plotAmountSnapshotPaise} />
+            <Stat label="Registration" paise={booking.registrationAmountSnapshotPaise} />
           </div>
-          <table className="mt-4 w-full text-sm">
-            <thead className="text-left text-ink-700">
-              <tr>
-                <th className="pb-2">Month</th>
-                <th className="pb-2">Amount</th>
-                <th className="pb-2">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {roi.entries.map((e) => (
-                <tr key={e.monthNumber} className="border-t border-brand-100">
-                  <td className="py-1.5">{e.monthNumber}</td>
-                  <td className="py-1.5">{formatPaise(e.amountPaise)}</td>
-                  <td className="py-1.5">
-                    <span className="status-pill status-ELIGIBLE">{e.status}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
-    </main>
-  );
-}
 
-function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
-  return (
-    <div>
-      <p className="text-xs text-ink-700">{label}</p>
-      <p className={`font-semibold ${highlight ? "text-brand-700" : "text-ink-900"}`}>{value}</p>
-    </div>
+          {/* ── Payment plan ─────────────────────────────────────────── */}
+          <Section title="Payment plan" note="Each instalment shows its due date and whether it has been received.">
+            <RecordList
+              items={[...booking.paymentSchedules]
+                .sort((a, b) => a.installmentNumber - b.installmentNumber)
+                .map((s) => ({
+                  id: String(s.installmentNumber),
+                  title: `Instalment ${s.installmentNumber}`,
+                  subtitle: `Due ${shortDate(s.dueDate)}`,
+                  status: s.status,
+                  fields: [{ label: "Amount", paise: s.amountDuePaise, emphasis: true }],
+                }))}
+            />
+          </Section>
+
+          {/* ── Receipts ─────────────────────────────────────────────── */}
+          <Section title="Payments received" note="Every payment recorded against this plot, newest first.">
+            {payments === null ? (
+              <RecordListSkeleton rows={2} />
+            ) : payments.length === 0 ? (
+              <EmptyState
+                title="Nothing received yet"
+                body="Payments appear here as soon as they are recorded against this plot."
+              />
+            ) : (
+              <RecordList
+                items={payments.map((p) => ({
+                  id: p.id,
+                  title: p.method.replace(/_/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase()),
+                  subtitle: shortDate(p.collectedAt ?? p.createdAt),
+                  status: p.status,
+                  fields: [{ label: "Amount", paise: p.amountPaise, emphasis: true }],
+                }))}
+              />
+            )}
+          </Section>
+
+          {/* ── Cash Plot ROI ────────────────────────────────────────── */}
+          {booking.roiEligible && roi && (
+            <Section
+              title="Cash Plot ROI"
+              note="Credited monthly against this plot. Each month carries its own state — only a credited month is money you have."
+            >
+              <StatGrid>
+                <Stat label="Months credited" value={roi.monthsCredited} />
+                <Stat label="Months remaining" value={roi.monthsRemaining} />
+                <Stat label="Total generated" paise={roi.totalRoiGeneratedPaise} tone="gold" />
+              </StatGrid>
+              <div className="mt-4">
+                <RecordList
+                  items={roi.entries.map((e) => ({
+                    id: String(e.monthNumber),
+                    title: `Month ${e.monthNumber}`,
+                    status: e.status,
+                    fields: [{ label: "Amount", paise: e.amountPaise, emphasis: true }],
+                  }))}
+                />
+              </div>
+            </Section>
+          )}
+        </>
+      )}
+    </PortalShell>
   );
 }

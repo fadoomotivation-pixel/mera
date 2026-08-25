@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma.js";
 import { serializeBigInts } from "../lib/serialize.js";
-import { authenticate, claims } from "../auth/authenticate.js";
+import { authenticate, claims, partnerScope } from "../auth/authenticate.js";
 import { requireRole } from "../auth/rbac.js";
 import { balanceSheetService } from "../domain/balance-sheet.service.js";
 
@@ -10,14 +10,12 @@ export async function partnerRoutes(app: FastifyInstance) {
   app.addHook("preHandler", async (req) => requireRole(claims(req), "CHANNEL_PARTNER"));
 
   app.get("/me", async (req, reply) => {
-    const c = claims(req);
-    const partner = await prisma.channelPartner.findUniqueOrThrow({ where: { id: c.partnerId! } });
+    const partner = await prisma.channelPartner.findUniqueOrThrow({ where: { id: partnerScope(req) } });
     reply.send(serializeBigInts(partner));
   });
 
   app.get("/dashboard", async (req, reply) => {
-    const c = claims(req);
-    const partnerId = c.partnerId!;
+    const partnerId = partnerScope(req);
 
     const [bookings, referralEntries, roiSkipped, bsStatus, activeTier, rewardAchievements, payouts] = await Promise.all([
       prisma.booking.findMany({ where: { partnerId } }),
@@ -56,9 +54,8 @@ export async function partnerRoutes(app: FastifyInstance) {
   });
 
   app.get("/referrals", async (req, reply) => {
-    const c = claims(req);
     const bookings = await prisma.booking.findMany({
-      where: { partnerId: c.partnerId! },
+      where: { partnerId: partnerScope(req) },
       include: { customer: { select: { name: true } }, plot: { include: { project: true } } },
       orderBy: { createdAt: "desc" },
     });
@@ -70,9 +67,8 @@ export async function partnerRoutes(app: FastifyInstance) {
   });
 
   app.get("/balance-sheet", async (req, reply) => {
-    const c = claims(req);
     const ledger = await prisma.balanceSheetLedger.findMany({
-      where: { partnerId: c.partnerId! },
+      where: { partnerId: partnerScope(req) },
       include: { closingCycle: true },
       orderBy: { createdAt: "desc" },
     });
@@ -80,9 +76,8 @@ export async function partnerRoutes(app: FastifyInstance) {
   });
 
   app.get("/tier", async (req, reply) => {
-    const c = claims(req);
     const achievements = await prisma.tierAchievement.findMany({
-      where: { partnerId: c.partnerId! },
+      where: { partnerId: partnerScope(req) },
       include: { royaltyTierRule: true },
       orderBy: { achievedAt: "desc" },
     });
@@ -90,9 +85,8 @@ export async function partnerRoutes(app: FastifyInstance) {
   });
 
   app.get("/royalty", async (req, reply) => {
-    const c = claims(req);
     const allocations = await prisma.royaltyAllocation.findMany({
-      where: { partnerId: c.partnerId! },
+      where: { partnerId: partnerScope(req) },
       include: { snapshot: true },
       orderBy: { createdAt: "desc" },
     });
@@ -100,9 +94,8 @@ export async function partnerRoutes(app: FastifyInstance) {
   });
 
   app.get("/rewards", async (req, reply) => {
-    const c = claims(req);
     const achievements = await prisma.rewardAchievement.findMany({
-      where: { partnerId: c.partnerId! },
+      where: { partnerId: partnerScope(req) },
       include: { rewardMilestoneRule: true, allocation: true },
       orderBy: { achievedAt: "desc" },
     });
@@ -110,18 +103,16 @@ export async function partnerRoutes(app: FastifyInstance) {
   });
 
   app.get("/payouts", async (req, reply) => {
-    const c = claims(req);
     const payouts = await prisma.payout.findMany({
-      where: { beneficiaryPartnerId: c.partnerId! },
+      where: { beneficiaryPartnerId: partnerScope(req) },
       orderBy: { createdAt: "desc" },
     });
     reply.send(serializeBigInts(payouts));
   });
 
   app.get("/customers", async (req, reply) => {
-    const c = claims(req);
     const bookings = await prisma.booking.findMany({
-      where: { partnerId: c.partnerId! },
+      where: { partnerId: partnerScope(req) },
       include: { customer: true },
       distinct: ["customerId"],
     });

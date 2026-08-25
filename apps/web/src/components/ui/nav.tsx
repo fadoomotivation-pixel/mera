@@ -92,7 +92,7 @@ export function SideNav({
         <Link
           href={item.href}
           aria-current={active ? "page" : undefined}
-          className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
+          className={`flex min-h-[44px] items-center gap-3 rounded-lg px-3 text-sm transition ${
             active ? "bg-navy-900 font-semibold text-ivory-50" : "text-navy-600 hover:bg-navy-900/[0.05]"
           }`}
         >
@@ -144,9 +144,19 @@ export function PortalHeader({
 
 /** Wordmark. Used in headers and the public site — one component so the
  * lockup (name + Devanagari tagline) never drifts between surfaces. */
-export function Wordmark({ tone = "navy", withTagline = true }: { tone?: "navy" | "ivory"; withTagline?: boolean }) {
+export function Wordmark({
+  tone = "navy",
+  withTagline = true,
+  className = "inline-block",
+}: {
+  tone?: "navy" | "ivory";
+  withTagline?: boolean;
+  /** Portals pass a min-height here so the wordmark clears the 44px touch
+   * minimum; the marketing pages keep the tight inline-block. */
+  className?: string;
+}) {
   return (
-    <Link href="/" className="inline-block leading-none">
+    <Link href="/" className={`${className} leading-none`}>
       <span
         className={`block font-display text-[19px] font-bold tracking-[0.18em] ${
           tone === "ivory" ? "text-ivory-50" : "text-navy-900"
