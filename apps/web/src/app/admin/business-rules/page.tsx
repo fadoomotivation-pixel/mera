@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import { useAdminAuthGuard } from "@/lib/useAuthGuard";
 import { api } from "@/lib/api";
-import { AdminNav } from "../AdminNav";
+import { PortalShell, PageHead } from "@/components/portal/PortalShell";
+import { ADMIN_NAV_GROUPS } from "@/components/portal/nav-items";
+import { RecordListSkeleton } from "@/components/portal/RecordList";
+import { Card } from "@/components/ui/primitives";
 
 interface RuleRow {
   key: string;
@@ -16,10 +19,13 @@ interface RuleRow {
   version: number;
 }
 
-const STATUS_STYLE: Record<string, string> = {
-  FINAL: "bg-green-100 text-green-800",
-  CONFIGURED: "bg-amber-100 text-amber-800",
-  PENDING_CEO_APPROVAL: "bg-red-100 text-red-800",
+/** Rule status has its own vocabulary, distinct from the payout lifecycle, so
+ * it gets its own pill rather than being forced through StatusPill. Each
+ * carries a dot as well as a colour — status is never colour alone. */
+const RULE_STATUS: Record<RuleRow["status"], { label: string; className: string }> = {
+  FINAL: { label: "Final", className: "bg-success-soft text-success-strong" },
+  CONFIGURED: { label: "Configured", className: "bg-navy-100 text-navy-700" },
+  PENDING_CEO_APPROVAL: { label: "Pending CEO approval", className: "bg-warning-soft text-warning-strong" },
 };
 
 export default function BusinessRulesPage() {
@@ -28,63 +34,77 @@ export default function BusinessRulesPage() {
 
   useEffect(() => {
     if (!authOk) return;
-    api.get<RuleRow[]>("/api/v1/admin/business-rules").then(setRows);
+    api.get<RuleRow[]>("/api/v1/admin/business-rules").then(setRows).catch(() => setRows([]));
   }, [authOk]);
 
-  if (!authOk) return null;
-
-  const pendingCount = rows?.filter((r) => r.status === "PENDING_CEO_APPROVAL").length ?? 0;
+  const pending = rows?.filter((r) => r.status === "PENDING_CEO_APPROVAL") ?? [];
 
   return (
-    <>
-      <AdminNav />
-      <main className="mx-auto max-w-5xl px-4 py-10">
-        <h1 className="text-2xl font-bold text-ink-900">Settings → Business Rules</h1>
-        <p className="mt-2 max-w-2xl text-sm text-ink-700">
-          Every rule below is versioned with an effective date and approval status. A rule marked{" "}
-          <strong>PENDING CEO APPROVAL</strong> was never silently guessed by the system — it has a
-          documented conservative default (see docs/01-business-rules-matrix.md) but the payout engine
-          refuses to move any payout depending on it past ELIGIBLE until the CEO approves it here.
-        </p>
+    <PortalShell navGroups={ADMIN_NAV_GROUPS}>
+      <PageHead
+        title="Business rules"
+        lead="Every rule is versioned, dated and attributed. A rule the business has not decided yet was never quietly guessed — it is marked pending, and the payout engine refuses to move anything that depends on it past ELIGIBLE."
+      />
 
-        {pendingCount > 0 && (
-          <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-            <strong>{pendingCount} rule{pendingCount > 1 ? "s" : ""}</strong> awaiting CEO approval. Production
-            payouts depending on these are held at <strong>ELIGIBLE</strong> and cannot be paid.
-          </div>
-        )}
+      {pending.length > 0 && (
+        <Card tone="gold" className="mb-6 p-4 sm:p-5">
+          <p className="font-display text-base font-bold text-navy-900">
+            {pending.length} rule{pending.length > 1 ? "s" : ""} awaiting a decision
+          </p>
+          <p className="mt-1.5 text-sm leading-relaxed text-navy-700">
+            Payouts that depend on {pending.length > 1 ? "these" : "this"} are held at ELIGIBLE and cannot be paid. They are
+            listed below with their conservative default.
+          </p>
+        </Card>
+      )}
 
-        <div className="mt-6 space-y-3">
-          {rows === null && <p className="text-ink-700">Loading…</p>}
-          {rows?.map((r) => (
-            <div key={r.key} className="rounded-2xl border border-brand-100 p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="font-semibold text-ink-900">{r.label}</p>
-                  <p className="text-xs text-ink-700">
-                    v{r.version} · effective {new Date(r.effectiveFrom).toLocaleDateString("en-IN")}
-                  </p>
-                </div>
-                <span className={`rounded-full px-3 py-1 text-xs font-bold ${STATUS_STYLE[r.status]}`}>
-                  {r.status.replace(/_/g, " ")}
-                </span>
-              </div>
-              <dl className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
-                {Object.entries(r.currentValue).map(([k, v]) => (
-                  <div key={k}>
-                    <dt className="text-xs text-ink-700">{k}</dt>
-                    <dd className="font-medium text-ink-900">{String(v)}</dd>
+      {rows === null ? (
+        <RecordListSkeleton rows={5} />
+      ) : (
+        <ul className="space-y-3">
+          {rows.map((r) => {
+            const tone = RULE_STATUS[r.status];
+            return (
+              <li key={r.key}>
+                <Card className="p-4 sm:p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="break-words font-semibold leading-snug text-navy-900">{r.label}</p>
+                      <p className="mt-1 text-caption text-navy-500">
+                        Version {r.version} · effective{" "}
+                        {new Date(r.effectiveFrom).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                      </p>
+                    </div>
+                    <span
+                      className={`inline-flex w-fit shrink-0 items-center gap-1.5 rounded-pill px-2.5 py-1 text-xs font-semibold ${tone.className}`}
+                    >
+                      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+                      {tone.label}
+                    </span>
                   </div>
-                ))}
-              </dl>
-              <p className="mt-3 text-xs text-ink-700">
-                Last changed by user {r.createdByUserId.slice(0, 8)}… ·{" "}
-                {r.approvedByUserId ? `Approved by ${r.approvedByUserId.slice(0, 8)}…` : "Not yet approved"}
-              </p>
-            </div>
-          ))}
-        </div>
-      </main>
-    </>
+
+                  {/* Rule values are arbitrary keys; two columns at 360px, more
+                      as the screen allows. break-words because some values are
+                      long unbroken identifiers. */}
+                  <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+                    {Object.entries(r.currentValue).map(([k, v]) => (
+                      <div key={k} className="min-w-0">
+                        <dt className="text-caption text-navy-400">{k}</dt>
+                        <dd className="tnum mt-0.5 break-words text-sm font-medium text-navy-900">{String(v)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+
+                  <p className="mt-4 border-t border-navy-900/[0.08] pt-3 text-caption text-navy-500">
+                    Set by {r.createdByUserId.slice(0, 8)}… ·{" "}
+                    {r.approvedByUserId ? `approved by ${r.approvedByUserId.slice(0, 8)}…` : "not yet approved"}
+                  </p>
+                </Card>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </PortalShell>
   );
 }

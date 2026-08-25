@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, formatPaise, clearSession } from "@/lib/api";
-import { useAuthGuard } from "@/lib/useAuthGuard";
-import { StatusPill } from "@/components/StatusPill";
+import { useEffect, useState, type ReactNode } from "react";
+import { api } from "@/lib/api";
+import { useSurfaceGuard } from "@/lib/useAuthGuard";
+import { PortalShell, PageHead } from "@/components/portal/PortalShell";
+import { PARTNER_NAV } from "@/components/portal/nav-items";
+import { RecordList, RecordListSkeleton, Stat, StatGrid, StatGridSkeleton, Section } from "@/components/portal/RecordList";
+import { Card, StatusPill, EmptyState, Eyebrow } from "@/components/ui/primitives";
+import { Money } from "@/components/ui/Money";
 
 interface Dashboard {
   totalPersonalSalesPaise: string;
@@ -15,133 +19,165 @@ interface Dashboard {
   payouts: { id: string; type: string; status: string; netAmountPaise: string }[];
 }
 
+const shortDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
 export default function PartnerDashboard() {
-  const ready = useAuthGuard("CHANNEL_PARTNER", "/partner/login");
+  const ready = useSurfaceGuard("partner");
   const [data, setData] = useState<Dashboard | null>(null);
 
   useEffect(() => {
     if (!ready) return;
-    api.get<Dashboard>("/api/v1/partner/dashboard").then(setData);
+    api.get<Dashboard>("/api/v1/partner/dashboard").then(setData).catch(() => {});
   }, [ready]);
 
-  if (!ready || !data) return null;
-
   return (
-    <main className="mx-auto max-w-5xl px-4 py-10">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-widest text-brand-700">MERA MAKAN</p>
-          <h1 className="text-2xl font-bold text-ink-900">Partner Dashboard</h1>
-        </div>
-        <button
-          onClick={() => {
-            clearSession();
-            window.location.href = "/partner/login";
-          }}
-          className="text-sm text-ink-700 hover:text-brand-700"
-        >
-          Log out
-        </button>
-      </div>
+    <PortalShell nav={PARTNER_NAV}>
+      <PageHead
+        title="My earnings"
+        lead="Each income stream stands on its own below. They are never added together into a single percentage — what you are paid on one has nothing to do with another."
+      />
 
-      {/* Top KPIs */}
-      <section className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Kpi label="Total Personal Sales" value={formatPaise(data.totalPersonalSalesPaise)} />
-        <Kpi label="Bookings Referred" value={String(data.totalBookings)} />
-        <Kpi label="Referral (net)" value={formatPaise(data.referral.netPaise)} />
-        <Kpi label="Balance Sheet Carry Forward" value={formatPaise(data.balanceSheet.currentCarryForwardPaise)} />
-      </section>
+      {!data ? (
+        <>
+          <StatGridSkeleton />
+          <div className="mt-10 grid gap-4 md:grid-cols-2">
+            <div className="skeleton h-52 rounded-card" />
+            <div className="skeleton h-52 rounded-card" />
+          </div>
+        </>
+      ) : (
+        <>
+          <StatGrid>
+            <Stat label="Personal sales" paise={data.totalPersonalSalesPaise} tone="navy" />
+            <Stat label="Bookings referred" value={data.totalBookings} />
+            <Stat label="Referral, net" paise={data.referral.netPaise} tone="gold" />
+            <Stat label="Carry forward" paise={data.balanceSheet.currentCarryForwardPaise} />
+          </StatGrid>
 
-      {/* Five streams — each its own card, never combined into one % */}
-      <div className="mt-10 grid gap-6 md:grid-cols-2">
-        <StreamCard title="01 — Referral Bonus (10%)">
-          <Row label="Gross" value={formatPaise(data.referral.grossPaise)} />
-          <Row label="Net (after admin charge + TDS)" value={formatPaise(data.referral.netPaise)} />
-          <Row label="Commission events" value={String(data.referral.entryCount)} />
-        </StreamCard>
+          {/* ── The streams. One card each, deliberately never summed. ──── */}
+          <Section
+            title="Income streams"
+            note="Every figure carries a state. Nothing is payable until it reaches PAID."
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              <StreamCard number="01" title="Referral bonus">
+                <Line label="Gross" paise={data.referral.grossPaise} />
+                <Line label="Net, after admin charge and TDS" paise={data.referral.netPaise} emphasis />
+                <Line label="Commission events" value={String(data.referral.entryCount)} />
+              </StreamCard>
 
-        <StreamCard title="03 — Balance Sheet (8%)">
-          <p className="text-xs text-ink-700">INPUT → OUTPUT → BALANCE → CARRY FORWARD</p>
-          <Row label="Current Carry Forward" value={formatPaise(data.balanceSheet.currentCarryForwardPaise)} />
-          <Row
-            label="Payout Status"
-            value={data.balanceSheet.payoutStatus === "SCHEDULED" ? "Scheduled" : "Awaiting payout schedule configuration"}
-          />
-        </StreamCard>
+              <StreamCard number="03" title="Balance sheet">
+                <p className="mb-3 text-caption leading-relaxed text-navy-500">
+                  Input → Output → Balance → Carry forward. What is left after each closing carries into the next.
+                </p>
+                <Line label="Current carry forward" paise={data.balanceSheet.currentCarryForwardPaise} emphasis />
+                <Line
+                  label="Payout"
+                  value={
+                    data.balanceSheet.payoutStatus === "SCHEDULED"
+                      ? "Scheduled"
+                      : "Awaiting a payout schedule from the business"
+                  }
+                />
+              </StreamCard>
 
-        <StreamCard title="04 — Royalty">
-          {data.currentTier ? (
-            <>
-              <Row label="Active Tier" value={`${data.currentTier.tierCode} · ${data.currentTier.tierName}`} />
-              <Row
-                label="Royalty Window"
-                value={`${new Date(data.currentTier.royaltyStartDate).toLocaleDateString("en-IN")} → ${new Date(
-                  data.currentTier.royaltyEndDate
-                ).toLocaleDateString("en-IN")}`}
-              />
-            </>
-          ) : (
-            <p className="text-sm text-ink-700">No active royalty tier yet.</p>
-          )}
-        </StreamCard>
+              <StreamCard number="04" title="Royalty">
+                {data.currentTier ? (
+                  <>
+                    <Line label="Active tier" value={`${data.currentTier.tierCode} · ${data.currentTier.tierName}`} emphasis />
+                    <Line
+                      label="Royalty window"
+                      value={`${shortDate(data.currentTier.royaltyStartDate)} — ${shortDate(data.currentTier.royaltyEndDate)}`}
+                    />
+                  </>
+                ) : (
+                  <p className="py-2 text-sm leading-relaxed text-navy-500">
+                    No royalty tier reached yet. Royalty starts the month after a tier is achieved.
+                  </p>
+                )}
+              </StreamCard>
 
-        <StreamCard title="05 — Rewards">
-          {data.rewardsUnlocked.length === 0 ? (
-            <p className="text-sm text-ink-700">No rewards unlocked yet.</p>
-          ) : (
-            data.rewardsUnlocked.map((r, i) => (
-              <Row key={i} label={r.rewardName} value={formatPaise(r.amountPaise)} status={r.status} />
-            ))
-          )}
-        </StreamCard>
-      </div>
-
-      {/* Payout history — every amount carries an explicit state */}
-      <section className="mt-10">
-        <h2 className="text-lg font-bold text-ink-900">Payout History</h2>
-        <p className="text-xs text-ink-700">
-          Every figure above has a state (PENDING / ELIGIBLE / APPROVED / PROCESSING / PAID / HELD / REVERSED / CANCELLED).
-          Nothing shown as &quot;estimated&quot; is treated as payable until it reaches PAID.
-        </p>
-        <div className="mt-4 space-y-2">
-          {data.payouts.length === 0 && <p className="text-sm text-ink-700">No payouts yet.</p>}
-          {data.payouts.map((p) => (
-            <div key={p.id} className="flex items-center justify-between rounded-xl border border-brand-100 px-4 py-3 text-sm">
-              <span className="font-medium">{p.type.replace(/_/g, " ")}</span>
-              <span>{formatPaise(p.netAmountPaise)}</span>
-              <StatusPill status={p.status} />
+              <StreamCard number="05" title="Rewards">
+                {data.rewardsUnlocked.length === 0 ? (
+                  <p className="py-2 text-sm leading-relaxed text-navy-500">
+                    No rewards unlocked yet. Each reward is tied to a milestone in your own sales — generation to generation.
+                  </p>
+                ) : (
+                  data.rewardsUnlocked.map((r, i) => (
+                    <Line key={i} label={r.rewardName} paise={r.amountPaise} status={r.status} emphasis />
+                  ))
+                )}
+              </StreamCard>
             </div>
-          ))}
-        </div>
-      </section>
-    </main>
+          </Section>
+
+          {/* ── Payouts ──────────────────────────────────────────────── */}
+          <Section
+            title="Payout history"
+            note="Pending, eligible, approved, processing, paid, held, reversed or cancelled — the state is always shown, and only PAID has left the business."
+          >
+            {data.payouts.length === 0 ? (
+              <EmptyState
+                title="No payouts yet"
+                body="A payout is created once an amount you have earned becomes eligible. You will see it here at every stage, not only when it is paid."
+              />
+            ) : (
+              <RecordList
+                items={data.payouts.map((p) => ({
+                  id: p.id,
+                  title: p.type.replace(/_/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase()),
+                  status: p.status,
+                  fields: [{ label: "Net amount", paise: p.netAmountPaise, emphasis: true }],
+                }))}
+              />
+            )}
+          </Section>
+        </>
+      )}
+    </PortalShell>
   );
 }
 
-function Kpi({ label, value }: { label: string; value: string }) {
+/** One income stream. The number is kept because partners refer to the streams
+ * by number in training material — 01 referral, 03 balance sheet, and so on. */
+function StreamCard({ number, title, children }: { number: string; title: string; children: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-brand-100 p-4">
-      <p className="text-xs text-ink-700">{label}</p>
-      <p className="mt-1 text-lg font-bold text-ink-900">{value}</p>
-    </div>
+    <Card className="flex flex-col p-4 sm:p-5">
+      <div className="flex items-baseline gap-2.5">
+        <Eyebrow>{number}</Eyebrow>
+        <h3 className="font-display text-lg font-bold text-navy-900">{title}</h3>
+      </div>
+      <div className="mt-4 flex-1 divide-y divide-navy-900/[0.06]">{children}</div>
+    </Card>
   );
 }
 
-function StreamCard({ title, children }: { title: string; children: React.ReactNode }) {
+/** A labelled figure. Wraps to two lines rather than squeezing on a 360px
+ * screen — a label truncated to "Net, after admin cha…" is worse than a
+ * second line. */
+function Line({
+  label,
+  value,
+  paise,
+  status,
+  emphasis,
+}: {
+  label: string;
+  value?: string;
+  paise?: string;
+  status?: string;
+  emphasis?: boolean;
+}) {
   return (
-    <div className="rounded-2xl border border-brand-100 p-5">
-      <h3 className="font-bold text-ink-900">{title}</h3>
-      <div className="mt-3 space-y-2">{children}</div>
-    </div>
-  );
-}
-
-function Row({ label, value, status }: { label: string; value: string; status?: string }) {
-  return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-ink-700">{label}</span>
-      <span className="flex items-center gap-2 font-semibold text-ink-900">
-        {value}
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+      <span className="min-w-0 text-sm text-navy-500">{label}</span>
+      <span className="flex flex-wrap items-center gap-2">
+        {paise !== undefined ? (
+          <Money paise={paise} size="xs" tone={emphasis ? "gold" : "default"} />
+        ) : (
+          <span className={`text-sm ${emphasis ? "font-semibold text-navy-900" : "text-navy-800"}`}>{value}</span>
+        )}
         {status && <StatusPill status={status} />}
       </span>
     </div>

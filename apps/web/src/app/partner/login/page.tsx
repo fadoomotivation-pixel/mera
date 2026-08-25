@@ -1,5 +1,8 @@
-import { PasswordLogin } from "@/components/PasswordLogin";
+import { redirect } from "next/navigation";
 
-export default function PartnerLoginPage() {
-  return <PasswordLogin title="Channel Partner Login" redirectTo="/partner/dashboard" />;
+/** MERA MAKAN has one sign-in page. This route is kept so older links,
+ * bookmarks and anything already printed on partner material still work —
+ * it simply forwards to /login, which routes by role after authentication. */
+export default function LegacyLoginRedirect() {
+  redirect("/login");
 }

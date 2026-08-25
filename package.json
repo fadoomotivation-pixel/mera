@@ -16,6 +16,7 @@
     "check:forbidden-terms": "tsx scripts/check-forbidden-terms.ts"
   },
   "devDependencies": {
+    "playwright": "^1.62.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   },

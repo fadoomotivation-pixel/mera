@@ -21,37 +21,79 @@ export async function adminRoutes(app: FastifyInstance) {
   app.addHook("preHandler", async (req) => requireRole(claims(req), ...ADMIN_ROLES));
 
   // ---------- Dashboard ----------
+  /** Dashboard totals.
+   *
+   * Deliberately ONE round trip rather than eight `Promise.all` queries. Those
+   * eight only run in parallel if the connection pool has eight connections to
+   * give them; the production DATABASE_URL sets `connection_limit=1` (correct
+   * for pgbouncer transaction mode), so they queued and each paid the full
+   * network latency in turn. Measured at 7.5-10.3s before this change.
+   *
+   * It also stopped pulling every Booking row into memory just to count and
+   * sum them — that cost grows with the business, and the aggregate is the
+   * database's job.
+   *
+   * The figures are unchanged: same filters, same statuses, same shape. */
   app.get("/dashboard", async (_req, reply) => {
-    const [bookings, referralLedger, bsLedger, royaltySnapshots, rewardAllocations, payouts, customerCount, partnerCount] =
-      await Promise.all([
-        prisma.booking.findMany({ select: { status: true, plotAmountSnapshotPaise: true } }),
-        prisma.ledgerEntry.aggregate({ where: { type: "REFERRAL_COMMISSION", status: "POSTED" }, _sum: { netAmountPaise: true } }),
-        prisma.ledgerEntry.aggregate({ where: { type: "BALANCE_SHEET", status: "POSTED" }, _sum: { netAmountPaise: true } }),
-        prisma.royaltySnapshot.aggregate({ _sum: { poolAmountPaise: true } }),
-        prisma.rewardAllocation.aggregate({ _sum: { amountPaise: true } }),
-        prisma.payout.groupBy({ by: ["status"], _sum: { netAmountPaise: true }, _count: true }),
-        prisma.customer.count(),
-        prisma.channelPartner.count(),
-      ]);
-
-    const totalSalesPaise = bookings.reduce((acc, b) => acc + b.plotAmountSnapshotPaise, 0n);
-    const grossBookingCount = bookings.length;
-    const collectedBookings = bookings.filter((b) =>
-      ["FULLY_COLLECTED", "REGISTERED", "COMPLETED"].includes(b.status)
-    ).length;
+    // Every money total is cast to ::text and every count to ::int inside the
+    // query rather than being converted here. Postgres SUM() over a bigint
+    // column returns `numeric`, which the raw-query driver hands back as a
+    // Decimal object — serializeBigInts would pass it straight through and the
+    // response would carry {"s":1,"e":8,"d":[...]} where the client expects a
+    // paise string. Casting in SQL keeps the wire format identical to what the
+    // previous Prisma aggregate path produced.
+    const [totals] = await prisma.$queryRaw<
+      {
+        totalSalesPaise: string;
+        grossBookingCount: number;
+        collectedBookings: number;
+        referralLiabilityPaise: string;
+        balanceSheetLiabilityPaise: string;
+        royaltyPoolTotalPaise: string;
+        rewardPayoutTotalPaise: string;
+        customerCount: number;
+        partnerCount: number;
+        payoutsByStatus: { status: string; _count: number; _sum: { netAmountPaise: string } }[];
+      }[]
+    >`
+      SELECT
+        (SELECT COALESCE(SUM("plotAmountSnapshotPaise"), 0)::text FROM "Booking")                 AS "totalSalesPaise",
+        (SELECT COUNT(*)::int FROM "Booking")                                                     AS "grossBookingCount",
+        (SELECT COUNT(*)::int FROM "Booking"
+          WHERE status IN ('FULLY_COLLECTED', 'REGISTERED', 'COMPLETED'))                         AS "collectedBookings",
+        (SELECT COALESCE(SUM("netAmountPaise"), 0)::text FROM "LedgerEntry"
+          WHERE type = 'REFERRAL_COMMISSION' AND status = 'POSTED')                               AS "referralLiabilityPaise",
+        (SELECT COALESCE(SUM("netAmountPaise"), 0)::text FROM "LedgerEntry"
+          WHERE type = 'BALANCE_SHEET' AND status = 'POSTED')                                     AS "balanceSheetLiabilityPaise",
+        (SELECT COALESCE(SUM("poolAmountPaise"), 0)::text FROM "RoyaltySnapshot")                 AS "royaltyPoolTotalPaise",
+        (SELECT COALESCE(SUM("amountPaise"), 0)::text FROM "RewardAllocation")                    AS "rewardPayoutTotalPaise",
+        (SELECT COUNT(*)::int FROM "Customer")                                                    AS "customerCount",
+        (SELECT COUNT(*)::int FROM "ChannelPartner")                                              AS "partnerCount",
+        (SELECT COALESCE(json_agg(json_build_object(
+            'status', s.status,
+            '_count', s.cnt,
+            '_sum', json_build_object('netAmountPaise', s.net::text)
+          ) ORDER BY s.status), '[]'::json)
+          FROM (
+            SELECT status::text AS status,
+                   COUNT(*)::int AS cnt,
+                   COALESCE(SUM("netAmountPaise"), 0) AS net
+            FROM "Payout" GROUP BY status
+          ) s)                                                                                    AS "payoutsByStatus"
+    `;
 
     reply.send(
       serializeBigInts({
-        totalSalesPaise,
-        grossBookingCount,
-        collectedBookings,
-        referralLiabilityPaise: referralLedger._sum.netAmountPaise ?? 0n,
-        balanceSheetLiabilityPaise: bsLedger._sum.netAmountPaise ?? 0n,
-        royaltyPoolTotalPaise: royaltySnapshots._sum.poolAmountPaise ?? 0n,
-        rewardPayoutTotalPaise: rewardAllocations._sum.amountPaise ?? 0n,
-        payoutsByStatus: payouts,
-        customerCount,
-        partnerCount,
+        totalSalesPaise: totals?.totalSalesPaise ?? "0",
+        grossBookingCount: totals?.grossBookingCount ?? 0,
+        collectedBookings: totals?.collectedBookings ?? 0,
+        referralLiabilityPaise: totals?.referralLiabilityPaise ?? "0",
+        balanceSheetLiabilityPaise: totals?.balanceSheetLiabilityPaise ?? "0",
+        royaltyPoolTotalPaise: totals?.royaltyPoolTotalPaise ?? "0",
+        rewardPayoutTotalPaise: totals?.rewardPayoutTotalPaise ?? "0",
+        payoutsByStatus: totals?.payoutsByStatus ?? [],
+        customerCount: totals?.customerCount ?? 0,
+        partnerCount: totals?.partnerCount ?? 0,
       })
     );
   });

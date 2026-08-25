@@ -1,5 +1,6 @@
 {
   "framework": null,
+  "regions": ["bom1"],
   "buildCommand": "pnpm exec prisma generate && pnpm exec tsc -p tsconfig.json",
   "outputDirectory": "public",
   "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }]

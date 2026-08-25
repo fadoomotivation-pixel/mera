@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma.js";
 import { serializeBigInts } from "../lib/serialize.js";
-import { authenticate, claims } from "../auth/authenticate.js";
+import { authenticate, claims, customerScope } from "../auth/authenticate.js";
 import { requireRole } from "../auth/rbac.js";
 import { bookingService } from "../domain/booking.service.js";
 import { NotFoundDomainError } from "../domain/errors.js";
@@ -19,15 +19,13 @@ export async function customerRoutes(app: FastifyInstance) {
   app.addHook("preHandler", async (req) => requireRole(claims(req), "CUSTOMER"));
 
   app.get("/me", async (req, reply) => {
-    const c = claims(req);
-    const customer = await prisma.customer.findUniqueOrThrow({ where: { id: c.customerId! } });
+    const customer = await prisma.customer.findUniqueOrThrow({ where: { id: customerScope(req) } });
     reply.send(serializeBigInts(customer));
   });
 
   app.get("/bookings", async (req, reply) => {
-    const c = claims(req);
     const bookings = await prisma.booking.findMany({
-      where: { customerId: c.customerId! },
+      where: { customerId: customerScope(req) },
       include: { plot: { include: { project: true } } },
       orderBy: { createdAt: "desc" },
     });
@@ -35,13 +33,13 @@ export async function customerRoutes(app: FastifyInstance) {
   });
 
   app.get("/bookings/:id", async (req, reply) => {
-    const c = claims(req);
+    const scopedCustomerId = customerScope(req);
     const { id } = req.params as { id: string };
     const booking = await prisma.booking.findUnique({
       where: { id },
       include: { plot: { include: { project: true } }, paymentSchedules: true },
     });
-    if (!booking || booking.customerId !== c.customerId) {
+    if (!booking || booking.customerId !== scopedCustomerId) {
       // 404, not 403 — avoid confirming existence of another customer's booking
       throw new NotFoundDomainError("Booking", id);
     }
@@ -50,19 +48,19 @@ export async function customerRoutes(app: FastifyInstance) {
   });
 
   app.get("/bookings/:id/payments", async (req, reply) => {
-    const c = claims(req);
+    const scopedCustomerId = customerScope(req);
     const { id } = req.params as { id: string };
     const booking = await prisma.booking.findUnique({ where: { id } });
-    if (!booking || booking.customerId !== c.customerId) throw new NotFoundDomainError("Booking", id);
+    if (!booking || booking.customerId !== scopedCustomerId) throw new NotFoundDomainError("Booking", id);
     const payments = await prisma.payment.findMany({ where: { bookingId: id }, orderBy: { createdAt: "desc" } });
     reply.send(serializeBigInts(payments));
   });
 
   app.get("/bookings/:id/roi", async (req, reply) => {
-    const c = claims(req);
+    const scopedCustomerId = customerScope(req);
     const { id } = req.params as { id: string };
     const booking = await prisma.booking.findUnique({ where: { id } });
-    if (!booking || booking.customerId !== c.customerId) throw new NotFoundDomainError("Booking", id);
+    if (!booking || booking.customerId !== scopedCustomerId) throw new NotFoundDomainError("Booking", id);
     if (!booking.roiEligible) throw new NotFoundDomainError("ROI schedule for booking", id);
 
     const entries = await prisma.roiScheduleEntry.findMany({ where: { bookingId: id }, orderBy: { monthNumber: "asc" } });
@@ -79,10 +77,10 @@ export async function customerRoutes(app: FastifyInstance) {
   });
 
   app.get("/bookings/:id/documents", async (req, reply) => {
-    const c = claims(req);
+    const scopedCustomerId = customerScope(req);
     const { id } = req.params as { id: string };
     const booking = await prisma.booking.findUnique({ where: { id } });
-    if (!booking || booking.customerId !== c.customerId) throw new NotFoundDomainError("Booking", id);
+    if (!booking || booking.customerId !== scopedCustomerId) throw new NotFoundDomainError("Booking", id);
     const docs = await prisma.document.findMany({ where: { ownerType: "BOOKING", ownerId: id } });
     reply.send(serializeBigInts(docs));
   });

@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, formatPaise } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import { api, ApiError } from "@/lib/api";
 import { useAdminAuthGuard } from "@/lib/useAuthGuard";
-import { AdminNav } from "../AdminNav";
+import { PortalShell, PageHead } from "@/components/portal/PortalShell";
+import { ADMIN_NAV_GROUPS } from "@/components/portal/nav-items";
+import { Stat, StatGrid, StatGridSkeleton, Section, RecordList, RecordListSkeleton } from "@/components/portal/RecordList";
+import { ErrorState, EmptyState, makeReferenceId } from "@/components/ui/primitives";
+import { Money } from "@/components/ui/Money";
 
 interface Dashboard {
   totalSalesPaise: string;
@@ -21,66 +25,98 @@ interface Dashboard {
 export default function AdminDashboard() {
   const authOk = useAdminAuthGuard();
   const [data, setData] = useState<Dashboard | null>(null);
+  const [error, setError] = useState<{ message: string; ref: string } | null>(null);
+
+  const load = useCallback(() => {
+    setError(null);
+    api
+      .get<Dashboard>("/api/v1/admin/dashboard")
+      .then(setData)
+      .catch((err) =>
+        setError({
+          message: err instanceof ApiError ? err.message : "The dashboard could not be loaded. Check your connection and try again.",
+          ref: makeReferenceId(),
+        })
+      );
+  }, []);
 
   useEffect(() => {
-    if (!authOk) return;
-    api.get<Dashboard>("/api/v1/admin/dashboard").then(setData);
-  }, [authOk]);
+    if (authOk) load();
+  }, [authOk, load]);
 
-  if (!authOk || !data) return null;
+  const loading = !data && !error;
 
   return (
-    <>
-      <AdminNav />
-      <main className="mx-auto max-w-6xl px-4 py-10">
-        <h1 className="text-2xl font-bold text-ink-900">CEO Dashboard</h1>
-        <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-          <Kpi label="Total Sales" value={formatPaise(data.totalSalesPaise)} />
-          <Kpi label="Gross Bookings" value={String(data.grossBookingCount)} />
-          <Kpi label="Fully Collected" value={String(data.collectedBookings)} />
-          <Kpi label="Customers / Partners" value={`${data.customerCount} / ${data.partnerCount}`} />
-        </div>
+    <PortalShell navGroups={ADMIN_NAV_GROUPS}>
+      <PageHead
+        title="Today"
+        lead="Everything below is computed by the API from posted ledger entries. Nothing on this screen is estimated."
+      />
 
-        <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-4">
-          <Kpi label="Referral Liability" value={formatPaise(data.referralLiabilityPaise)} />
-          <Kpi label="Balance Sheet Liability" value={formatPaise(data.balanceSheetLiabilityPaise)} />
-          <Kpi label="Royalty Pool (cumulative)" value={formatPaise(data.royaltyPoolTotalPaise)} />
-          <Kpi label="Reward Payouts (cumulative)" value={formatPaise(data.rewardPayoutTotalPaise)} />
-        </div>
+      {error && (
+        <ErrorState
+          title="Could not load the dashboard"
+          body={error.message}
+          referenceId={error.ref}
+          onRetry={load}
+          financialAssurance="No figures were changed. This screen only reads."
+        />
+      )}
 
-        <section className="mt-10">
-          <h2 className="text-lg font-bold text-ink-900">Payouts by Status</h2>
-          <table className="mt-3 w-full text-sm">
-            <thead className="text-left text-ink-700">
-              <tr>
-                <th className="pb-2">Status</th>
-                <th className="pb-2">Count</th>
-                <th className="pb-2">Net Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.payoutsByStatus.map((row) => (
-                <tr key={row.status} className="border-t border-brand-100">
-                  <td className="py-2">
-                    <span className={`status-pill status-${row.status}`}>{row.status}</span>
-                  </td>
-                  <td className="py-2">{row._count}</td>
-                  <td className="py-2">{formatPaise(row._sum.netAmountPaise ?? "0")}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      </main>
-    </>
-  );
-}
+      {/* ── Sales ─────────────────────────────────────────────────────── */}
+      {loading ? (
+        <StatGridSkeleton />
+      ) : (
+        data && (
+          <StatGrid>
+            <Stat label="Total sales" paise={data.totalSalesPaise} tone="navy" />
+            <Stat label="Bookings" value={data.grossBookingCount} hint={`${data.collectedBookings} fully collected`} />
+            <Stat label="Customers" value={data.customerCount} />
+            <Stat label="Channel partners" value={data.partnerCount} />
+          </StatGrid>
+        )
+      )}
 
-function Kpi({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-brand-100 p-4">
-      <p className="text-xs text-ink-700">{label}</p>
-      <p className="mt-1 text-lg font-bold text-ink-900">{value}</p>
-    </div>
+      {/* ── Liability ─────────────────────────────────────────────────── */}
+      {data && (
+        <Section
+          title="Outstanding liability"
+          note="What the business owes partners on work already done. Each stream is shown on its own — these are never added into a single percentage."
+        >
+          <StatGrid>
+            <Stat label="Referral" paise={data.referralLiabilityPaise} tone="gold" />
+            <Stat label="Balance sheet" paise={data.balanceSheetLiabilityPaise} tone="gold" />
+            <Stat label="Royalty pool" paise={data.royaltyPoolTotalPaise} hint="Cumulative" />
+            <Stat label="Rewards" paise={data.rewardPayoutTotalPaise} hint="Cumulative" />
+          </StatGrid>
+        </Section>
+      )}
+
+      {/* ── Payouts ───────────────────────────────────────────────────── */}
+      <Section
+        title="Payouts by state"
+        note="A payout only leaves the business at PAID. Every other state is money still held."
+      >
+        {loading ? (
+          <RecordListSkeleton rows={3} />
+        ) : data?.payoutsByStatus.length ? (
+          <RecordList
+            items={data.payoutsByStatus.map((row) => ({
+              id: row.status,
+              title: <Money paise={row._sum.netAmountPaise ?? "0"} size="sm" />,
+              subtitle: `${row._count} payout${row._count === 1 ? "" : "s"}`,
+              status: row.status,
+            }))}
+          />
+        ) : (
+          data && (
+            <EmptyState
+              title="No payouts yet"
+              body="Payouts appear here once a commission, balance sheet balance, royalty allocation or reward becomes eligible."
+            />
+          )
+        )}
+      </Section>
+    </PortalShell>
   );
 }

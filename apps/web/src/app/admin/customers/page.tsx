@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAdminAuthGuard } from "@/lib/useAuthGuard";
 import { api, ApiError } from "@/lib/api";
-import { AdminNav } from "../AdminNav";
+import { PortalShell, PageHead } from "@/components/portal/PortalShell";
+import { ADMIN_NAV_GROUPS } from "@/components/portal/nav-items";
+import { RecordList, RecordListSkeleton } from "@/components/portal/RecordList";
+import { Field, Input, FormCard, FormError, CredentialNotice } from "@/components/portal/Form";
+import { Button, EmptyState } from "@/components/ui/primitives";
 
 interface Customer {
   id: string;
@@ -21,13 +25,13 @@ export default function AdminCustomersPage() {
   const [busy, setBusy] = useState(false);
   const [lastCreated, setLastCreated] = useState<{ email: string; password: string } | null>(null);
 
-  function reload() {
-    api.get<Customer[]>("/api/v1/admin/customers").then(setCustomers);
-  }
+  const reload = useCallback(() => {
+    api.get<Customer[]>("/api/v1/admin/customers").then(setCustomers).catch(() => setCustomers([]));
+  }, []);
 
   useEffect(() => {
     if (authOk) reload();
-  }, [authOk]);
+  }, [authOk, reload]);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -47,87 +51,83 @@ export default function AdminCustomersPage() {
       setShowForm(false);
       reload();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to create customer");
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "The login could not be created. Nothing was saved — check your connection and try again."
+      );
     } finally {
       setBusy(false);
     }
   }
 
-  if (!authOk) return null;
-
   return (
-    <>
-      <AdminNav />
-      <main className="mx-auto max-w-4xl px-4 py-10">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-ink-900">Customers</h1>
-          <button
-            onClick={() => setShowForm((s) => !s)}
-            className="rounded-full bg-ink-900 px-4 py-2 text-sm font-semibold text-white"
-          >
-            {showForm ? "Cancel" : "+ Create Customer Login"}
-          </button>
-        </div>
-        <p className="mt-1 text-sm text-ink-700">
-          No SMS gateway is configured, so customers log in with an email + password you set here — hand
-          the credentials to them directly (WhatsApp, call, in person).
-        </p>
+    <PortalShell navGroups={ADMIN_NAV_GROUPS}>
+      <PageHead
+        title="Customers"
+        lead="No SMS gateway is configured, so customers sign in with an email and a password you set here. Hand the credentials over directly."
+        action={
+          <Button variant={showForm ? "outline" : "primary"} onClick={() => setShowForm((s) => !s)} className="w-full sm:w-auto">
+            {showForm ? "Cancel" : "Create login"}
+          </Button>
+        }
+      />
 
-        {lastCreated && (
-          <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-900">
-            Created. Login: <strong>{lastCreated.email}</strong> / <strong>{lastCreated.password}</strong> — share
-            this with the customer now; it is not shown again.
-          </div>
-        )}
+      {lastCreated && (
+        <CredentialNotice
+          lines={[
+            { label: "Email", value: lastCreated.email },
+            { label: "Password", value: lastCreated.password },
+          ]}
+          onDismiss={() => setLastCreated(null)}
+        />
+      )}
 
-        {showForm && (
-          <form onSubmit={onSubmit} className="mt-4 space-y-3 rounded-2xl border border-brand-100 p-5">
-            <div>
-              <label className="text-sm font-medium">Name</label>
-              <input name="name" required className="mt-1 w-full rounded-lg border px-3 py-2" />
-            </div>
-            <div>
-              <label className="text-sm font-medium">Email (their login)</label>
-              <input name="email" type="email" required className="mt-1 w-full rounded-lg border px-3 py-2" />
-            </div>
-            <div>
-              <label className="text-sm font-medium">Temporary Password</label>
-              <input name="password" required minLength={8} className="mt-1 w-full rounded-lg border px-3 py-2" />
-            </div>
-            <div>
-              <label className="text-sm font-medium">Phone (optional)</label>
-              <input name="phone" className="mt-1 w-full rounded-lg border px-3 py-2" />
-            </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-            <button disabled={busy} className="rounded-full bg-brand-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
-              {busy ? "Creating…" : "Create Customer Login"}
-            </button>
-          </form>
-        )}
+      {showForm && (
+        <FormCard title="Create customer login" onSubmit={onSubmit}>
+          <Field label="Full name">
+            <Input name="name" required autoComplete="off" />
+          </Field>
+          <Field label="Email" hint="This is what they type to sign in.">
+            <Input name="email" type="email" inputMode="email" required autoComplete="off" />
+          </Field>
+          <Field label="Temporary password" hint="At least 8 characters. Shown once, on the next screen.">
+            <Input name="password" required minLength={8} autoComplete="new-password" />
+          </Field>
+          <Field label="Phone">
+            <Input name="phone" type="tel" inputMode="tel" autoComplete="off" placeholder="Optional" />
+          </Field>
 
-        <table className="mt-6 w-full text-sm">
-          <thead className="text-left text-ink-700">
-            <tr>
-              <th className="pb-2">Name</th>
-              <th className="pb-2">Email</th>
-              <th className="pb-2">Phone</th>
-              <th className="pb-2">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {customers?.map((c) => (
-              <tr key={c.id} className="border-t border-brand-100">
-                <td className="py-2">{c.name}</td>
-                <td className="py-2">{c.user.email ?? "—"}</td>
-                <td className="py-2">{c.user.phone ?? "—"}</td>
-                <td className="py-2">
-                  <span className="status-pill status-ELIGIBLE">{c.user.status}</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </main>
-    </>
+          {error && <FormError>{error}</FormError>}
+
+          <Button type="submit" disabled={busy} size="lg" className="w-full sm:w-auto">
+            {busy ? "Creating…" : "Create login"}
+          </Button>
+        </FormCard>
+      )}
+
+      {customers === null ? (
+        <RecordListSkeleton />
+      ) : customers.length === 0 ? (
+        <EmptyState
+          title="No customers yet"
+          body="Create a login for a customer and they can follow their own booking, payments and documents from their phone."
+          action={<Button onClick={() => setShowForm(true)}>Create login</Button>}
+        />
+      ) : (
+        <RecordList
+          items={customers.map((c) => ({
+            id: c.id,
+            title: c.name,
+            subtitle: c.user.email ?? "No email on record",
+            status: c.user.status,
+            fields: [
+              { label: "Phone", value: c.user.phone ?? "—" },
+              { label: "Added", value: new Date(c.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) },
+            ],
+          }))}
+        />
+      )}
+    </PortalShell>
   );
 }
