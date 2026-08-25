@@ -39,7 +39,58 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+const REFRESH_PATH = "/api/v1/auth/refresh";
+
+/* ─────────────────────────── Session renewal ───────────────────────────
+ *
+ * The access token lives 15 minutes. The API has always issued a 30-day
+ * refresh token alongside it and exposed /auth/refresh to trade one for a
+ * fresh access token — but this client never called it. So every session
+ * died fifteen minutes after sign-in and the screen said "Invalid or expired
+ * access token", which reads like a broken product rather than a normal
+ * expiry. Half a session system is worse than none: the user is logged out
+ * on a timer while a perfectly good refresh token sits unused in a cookie.
+ *
+ * Renewal is single-flight. A dashboard fires several requests at once, and
+ * they will all get a 401 within milliseconds of each other; without this,
+ * each would start its own refresh, and because the server rotates the
+ * refresh token on every use, the later ones would present an
+ * already-revoked token and be logged out. One refresh, shared by all
+ * waiters. */
+let refreshInFlight: Promise<string | null> | null = null;
+
+async function renewAccessToken(): Promise<string | null> {
+  refreshInFlight ??= (async () => {
+    try {
+      const res = await fetch(`${API_BASE}${REFRESH_PATH}`, { method: "POST", credentials: "include" });
+      if (!res.ok) return null;
+      const body = await res.json().catch(() => null);
+      const token: string | null = body?.accessToken ?? null;
+      if (token) window.localStorage.setItem(TOKEN_KEY, token);
+      return token;
+    } catch {
+      // Network failure, not an expired session. Returning null sends the
+      // caller to sign in, which is the safe direction to be wrong in.
+      return null;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+/** Session is over: clear it and send them to sign in, carrying where they
+ * were so they land back there instead of on a generic dashboard. */
+function endSession() {
+  clearSession();
+  if (typeof window === "undefined") return;
+  const here = window.location.pathname + window.location.search;
+  if (window.location.pathname !== "/login") {
+    window.location.replace(`/login?next=${encodeURIComponent(here)}`);
+  }
+}
+
+async function request<T>(path: string, opts: RequestInit = {}, allowRenew = true): Promise<T> {
   const token = getAccessToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...opts,
@@ -50,6 +101,17 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
       ...opts.headers,
     },
   });
+
+  // An expired access token is an ordinary event, not an error to show
+  // someone. Renew once and replay the request; only if renewal fails is
+  // this actually the end of the session.
+  if (res.status === 401 && allowRenew && path !== REFRESH_PATH) {
+    const renewed = await renewAccessToken();
+    if (renewed) return request<T>(path, opts, false);
+    endSession();
+    throw new ApiError(401, "SESSION_EXPIRED", "Your session has ended. Please sign in again.");
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: { code: "UNKNOWN", message: res.statusText } }));
     throw new ApiError(res.status, body.error?.code ?? "UNKNOWN", body.error?.message ?? res.statusText);

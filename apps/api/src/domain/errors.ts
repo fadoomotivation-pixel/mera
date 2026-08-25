@@ -63,3 +63,21 @@ export class PermissionDeniedError extends DomainError {
     super("PERMISSION_DENIED", message);
   }
 }
+
+/** 401, not 403: the caller has not proved who they are — no token, a
+ * malformed one, an expired one, or a refresh token that is spent.
+ *
+ * The distinction is not pedantry. Everything authentication-related used to
+ * answer 403, the same as a role denial, so the browser client could not tell
+ * "your fifteen minutes are up, renew and carry on" from "you are not allowed
+ * to do this, renewing would change nothing". Unable to tell them apart, it
+ * renewed on neither — and every session simply ended after fifteen minutes
+ * with "Invalid or expired access token" on screen.
+ *
+ * 401 means: authenticate again, then retry.
+ * 403 means: we know who you are; this is not yours. */
+export class UnauthenticatedError extends DomainError {
+  constructor(message = "Not authenticated") {
+    super("UNAUTHENTICATED", message);
+  }
+}

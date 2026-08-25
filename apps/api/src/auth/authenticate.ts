@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { tokenService, type AccessTokenClaims } from "./token.service.js";
-import { PermissionDeniedError } from "../domain/errors.js";
+import { PermissionDeniedError, UnauthenticatedError } from "../domain/errors.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -14,18 +14,18 @@ declare module "fastify" {
 export async function authenticate(req: FastifyRequest, _reply: FastifyReply) {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {
-    throw new PermissionDeniedError("Missing bearer token");
+    throw new UnauthenticatedError("Missing bearer token");
   }
   const token = header.slice("Bearer ".length);
   try {
     req.authClaims = tokenService.verifyAccessToken(token);
   } catch {
-    throw new PermissionDeniedError("Invalid or expired access token");
+    throw new UnauthenticatedError("Invalid or expired access token");
   }
 }
 
 export function claims(req: FastifyRequest): AccessTokenClaims {
-  if (!req.authClaims) throw new PermissionDeniedError("Not authenticated");
+  if (!req.authClaims) throw new UnauthenticatedError("Not authenticated");
   return req.authClaims;
 }
 

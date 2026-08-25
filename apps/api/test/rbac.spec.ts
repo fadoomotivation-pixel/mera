@@ -20,8 +20,11 @@ afterAll(async () => {
 describe("RBAC — server-side enforcement (docs/05-permission-matrix.md)", () => {
   it("rejects an admin route with no token", async () => {
     const res = await app.inject({ method: "GET", url: "/api/v1/admin/dashboard" });
-    expect(res.statusCode).toBe(403);
-    expect(res.json().error.code).toBe("PERMISSION_DENIED");
+    // 401, not 403: nobody has proved who they are yet. A client that gets
+    // this should authenticate and retry, which is a different action from
+    // the 403 below (known caller, wrong role) where retrying is pointless.
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.code).toBe("UNAUTHENTICATED");
   });
 
   it("rejects an admin route when called with a CUSTOMER token", async () => {

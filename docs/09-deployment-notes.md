@@ -63,3 +63,40 @@ connection is IPv6-only and unreachable from Vercel functions.
 360/390/412/768/1440 and fails on horizontal overflow or any tap target under
 44px. It needs a local stack with demo data seeded. Set `CHROMIUM_PATH` if
 Playwright's own browser download is unavailable.
+
+## Sessions across two origins
+
+The access token lasts 15 minutes; the refresh token lasts 30 days and rotates
+on every use. Three things have to line up or the session dies on a timer:
+
+1. **The client must call `/auth/refresh`.** It didn't, for a long time. The
+   API issued a perfectly good refresh token that nothing ever redeemed, so
+   every user was signed out fifteen minutes after signing in and shown
+   *Invalid or expired access token*. `apps/web/src/lib/api.ts` now renews on
+   a 401 and replays the request once. Renewal is single-flight: several
+   requests expiring together must share one renewal, because the server
+   rotates the token and the losers of the race would present a revoked one.
+
+2. **401 and 403 must mean different things.** Everything auth-related used to
+   answer 403, so the client could not distinguish *renew and retry* from
+   *you are not allowed*. Authentication failures (no token, bad token,
+   expired token, spent refresh token) are now **401 `UNAUTHENTICATED`**; role
+   and scope denials stay **403 `PERMISSION_DENIED`**.
+
+3. **The refresh cookie must be able to cross origins.** The web app is on
+   `meramakan.com` and the API on `mera-api.vercel.app` — different sites, so
+   `SameSite=Strict` meant the browser never sent the cookie and the refresh
+   endpoint saw an anonymous request. It is now `SameSite=None; Secure` in
+   production, `Lax` locally (browsers reject None without Secure, and local
+   dev is plain http).
+
+Because the cookie now travels cross-site, `origin: true` in the CORS config
+was no longer acceptable — it reflected any origin *with credentials*, which
+would let any page call `/auth/refresh` and read a live access token out of
+the response. There is now an allowlist (`isAllowedOrigin` in `src/app.ts`),
+overridable with `CORS_ALLOWED_ORIGINS`. **If the site ever moves to a new
+domain, add it there or every API call will fail CORS.**
+
+Known limitation: because refresh tokens rotate, two browser tabs that both
+renew at the same moment can race, and the loser is signed out. Single-flight
+solves this within one tab, not across tabs.
