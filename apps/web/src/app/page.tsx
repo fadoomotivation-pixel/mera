@@ -5,7 +5,17 @@ import { KhatuHeroArt } from "@/components/marketing/KhatuHeroArt";
 import { LeadForm } from "./LeadForm";
 import { ButtonLink, Card, Eyebrow, SectionTitle } from "@/components/ui/primitives";
 import { Timeline, type TimelineStep } from "@/components/ui/Timeline";
-import { AMENITIES, PAYMENT_PLAN, PHOTOS, PLOT, PROJECT, rupees } from "@/lib/project";
+import {
+  AMENITIES,
+  DIRECTIONS_URL,
+  MAPS_URL,
+  PAYMENT_PLAN,
+  PHOTOS,
+  PLOT,
+  PROJECT,
+  SITE,
+  rupees,
+} from "@/lib/project";
 
 export const metadata = {
   title: `MERA MAKAN — ${PROJECT.locality} में अपनी ज़मीन`,
@@ -139,6 +149,61 @@ export default function LandingPage() {
                 />
               </div>
             </div>
+
+            {/* The exact spot. A page that says "near the temple" and stops
+                there is asking to be doubted; the coordinates and a directions
+                link let anyone check the claim in about ten seconds, which is
+                worth more than another paragraph of description. */}
+            <Card tone="quiet" className="mt-6 p-6 sm:p-8">
+              <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0">
+                  <Eyebrow>Exact site</Eyebrow>
+                  <p className="mt-3 font-display text-xl font-bold text-navy-900">
+                    {SITE.villageHi} · {PROJECT.district}
+                  </p>
+                  <dl className="mt-4 grid gap-x-8 gap-y-3 sm:grid-cols-2">
+                    <div>
+                      <dt className="text-caption text-navy-400">Coordinates</dt>
+                      <dd className="tnum mt-0.5 select-all break-words text-sm font-medium text-navy-900">
+                        {SITE.lat}, {SITE.lng}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-caption text-navy-400">Plus Code</dt>
+                      <dd className="mt-0.5 select-all break-words text-sm font-medium text-navy-900">
+                        {SITE.plusCode}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="mt-4 max-w-prose text-caption leading-relaxed text-navy-500">
+                    ज़मीन देखने ज़रूर आइए — नक़्शे पर सही जगह ऊपर दी गई है।
+                  </p>
+                </div>
+
+                <div className="flex shrink-0 flex-col gap-3 sm:flex-row lg:flex-col">
+                  <a
+                    href={DIRECTIONS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-[52px] items-center justify-center gap-2 rounded-pill bg-navy-900 px-7 text-base font-semibold text-ivory-50 transition hover:bg-navy-800"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                      <path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11Z" />
+                      <circle cx="12" cy="10" r="2.5" />
+                    </svg>
+                    Get directions
+                  </a>
+                  <a
+                    href={MAPS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-[52px] items-center justify-center rounded-pill border border-navy-900/15 bg-white px-7 text-base font-semibold text-navy-900 transition hover:border-navy-900/30"
+                  >
+                    View on map
+                  </a>
+                </div>
+              </div>
+            </Card>
           </div>
         </section>
 

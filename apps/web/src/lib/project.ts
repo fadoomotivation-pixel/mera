@@ -18,8 +18,18 @@ export const PROJECT = {
   localityEn: "Khatu Shyam Ji",
   districtEn: "Sikar, Rajasthan",
 
-  /** CONFIRM: replace with the surveyed distance/drive time from the temple.
-   * Left deliberately non-numeric until verified. */
+  /** Still non-numeric, and deliberately so.
+   *
+   * The site coordinates below are exact, but the temple's own published
+   * coordinates disagree between sources by roughly nine kilometres of
+   * longitude, so any "X km from the temple" line on this page would be a
+   * number we cannot stand behind. A buyer who drives out and finds it wrong
+   * does not forgive it. Until someone measures the road distance, the page
+   * says "near" in words and hands over a Get directions button instead —
+   * which tells each visitor the real distance from wherever they actually
+   * are, and is more useful than our average anyway.
+   *
+   * CONFIRM: replace with a surveyed road distance and drive time. */
   templeProximity: "खाटू श्याम धाम के निकट",
   templeProximityEn: "Close to Khatu Shyam Dham",
 
@@ -28,6 +38,28 @@ export const PROJECT = {
   whatsapp: "",
   officeAddress: "",
 } as const;
+
+/** The site itself, as supplied by the owner from Google Maps.
+ *
+ * `mapsUrl` and `directionsUrl` are built from the coordinates using Google's
+ * documented Maps URL parameters rather than pasted from the browser address
+ * bar. A pasted URL carries a viewport, a zoom level and a session tracking
+ * token (`g_ep=…`) that goes stale; these two forms are stable and will keep
+ * resolving to this exact point years from now. */
+export const SITE = {
+  lat: 27.448296,
+  lng: 75.498354,
+  /** What Google shows for the pin — useful for anyone comparing by eye. */
+  dms: `27°26'53.9"N 75°29'54.1"E`,
+  /** Plus Code. Works in Google Maps search on its own, and is short enough
+   * to read out over a phone call, which the decimal pair is not. */
+  plusCode: "CFXX+889 Malikpur, Rajasthan",
+  village: "Malikpur",
+  villageHi: "मालिकपुर",
+} as const;
+
+export const MAPS_URL = `https://www.google.com/maps/search/?api=1&query=${SITE.lat},${SITE.lng}`;
+export const DIRECTIONS_URL = `https://www.google.com/maps/dir/?api=1&destination=${SITE.lat},${SITE.lng}`;
 
 /** Plot economics. These mirror the seeded business rules and the Channel
  * Partner deck exactly — see docs/07-product-alignment-audit.md §A15. Changing
